@@ -1,0 +1,32 @@
+[Unit]
+Description=SENTINEL Frigate Webhook Receiver
+Documentation=file:///opt/sentinel/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m analysis.frigate_receiver
+WorkingDirectory=/opt/sentinel
+Restart=on-failure
+RestartSec=10
+
+User=root
+Group=root
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sentinel-frigate
+
+ProtectSystem=strict
+ReadWritePaths=/opt/sentinel/data /opt/sentinel/logs
+ProtectHome=yes
+PrivateTmp=yes
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/sentinel
+
+[Install]
+WantedBy=multi-user.target

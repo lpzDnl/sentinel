@@ -1,0 +1,18 @@
+# Sensitive
+config.yaml
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Data
+data/

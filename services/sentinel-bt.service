@@ -1,0 +1,37 @@
+[Unit]
+Description=SENTINEL Bluetooth Scanner
+Documentation=file:///opt/sentinel/README.md
+After=network.target bluetooth.target
+Wants=network.target bluetooth.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m capture.bt_scanner
+WorkingDirectory=/opt/sentinel
+Restart=on-failure
+RestartSec=10
+
+# Run as root for BT adapter access
+User=root
+Group=root
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sentinel-bt
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/opt/sentinel/data /opt/sentinel/logs
+ProtectHome=yes
+NoNewPrivileges=no
+PrivateTmp=yes
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/sentinel
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+{% block title %} — {{ device.alias or device.mac }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>DEVICE PROFILE</h1>
+  <span class="subtitle"><span class="text-cyan">{{ device.mac }}</span></span>
+</div>
+
+<div class="grid grid-2 mb-1">
+  <!-- Device info -->
+  <div class="card {% if tag and tag.flagged %}card-glow{% endif %}">
+    <div class="card-header">Device Intelligence</div>
+    <table style="font-size:0.82rem">
+      <tr><td class="text-dim" style="width:130px;padding:0.4rem 0">MAC Address</td><td class="mac">{{ device.mac }}{% if device.is_randomized %} <span class="badge badge-dim">RANDOMIZED</span>{% endif %}</td></tr>
+      <tr><td class="text-dim" style="padding:0.4rem 0">Type</td><td>
+        {% if device.device_type == 'wifi' %}<span class="badge badge-blue">WiFi</span>
+        {% elif device.device_type == 'bluetooth_le' %}<span class="badge badge-purple">BLE</span>
+        {% elif device.device_type == 'bluetooth_classic' %}<span class="badge badge-purple">BT Classic</span>
+        {% else %}<span class="badge badge-dim">Unknown</span>{% endif %}
+      </td></tr>
+      <tr><td class="text-dim" style="padding:0.4rem 0">Vendor</td><td>{{ device.vendor or '—' }}</td></tr>
+      <tr><td class="text-dim" style="padding:0.4rem 0">Hostname</td><td>{{ device.hostname or '—' }}</td></tr>
+      <tr><td class="text-dim" style="padding:0.4rem 0">Alias</td><td>
+        <span id="device-alias">{{ device.alias or '—' }}</span>
+      </td></tr>
+      <tr><td class="text-dim" style="padding:0.4rem 0">First Seen</td><td>{{ device.first_seen | localtime }}</td></tr>
+      <tr><td class="text-dim" style="padding:0.4rem 0">Last Seen</td><td>{{ device.last_seen | localtime }} <span class="text-muted">({{ device.last_seen | timeago }})</span></td></tr>
+      <tr><td class="text-dim" style="padding:0.4rem 0">Sightings</td><td class="text-cyan">{{ device.total_sightings }}</td></tr>
+      <tr><td class="text-dim" style="padding:0.4rem 0">Total Visits</td><td class="text-cyan">{{ visits | length }}</td></tr>
+    </table>
+
+    {% if ssid_list %}
+    <div style="margin-top:0.8rem">
+      <div class="card-header">Probed SSIDs</div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.3rem">
+        {% for ssid in ssid_list %}
+        <span class="badge badge-blue">{{ ssid }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Tag editor -->
+  <div class="card">
+    <div class="card-header">Identity Classification</div>
+    <form id="tag-form" onsubmit="return saveTag(event)">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Category</label>
+          <select id="tag-category" name="category">
+            {% for cat in categories %}
+            <option value="{{ cat }}" {% if tag and tag.category == cat %}selected{% endif %}>{{ cat | upper }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Flagged</label>
+          <select id="tag-flagged" name="flagged">
+            <option value="false" {% if not tag or not tag.flagged %}selected{% endif %}>No</option>
+            <option value="true" {% if tag and tag.flagged %}selected{% endif %}>Yes — THREAT</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Label / Identity</label>
+        <input type="text" id="tag-label" name="label" placeholder="e.g. John's iPhone, FedEx truck" value="{{ tag.label if tag and tag.label else '' }}">
+      </div>
+      <div class="form-group">
+        <label>Alias (friendly name)</label>
+        <input type="text" id="device-alias-input" placeholder="e.g. Neighbor's Car" value="{{ device.alias or '' }}">
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea id="tag-notes" name="notes" rows="2" placeholder="Investigation notes...">{{ tag.notes if tag and tag.notes else '' }}</textarea>
+      </div>
+      <button type="submit" class="btn btn-cyan">Save Classification</button>
+      <span id="save-status" style="margin-left:0.8rem;font-size:0.78rem"></span>
+    </form>
+  </div>
+</div>
+
+<!-- Baseline -->
+{% if baseline %}
+<div class="card mb-1">
+  <div class="card-header">Behavioral Baseline</div>
+  <div class="grid grid-4 gap-sm">
+    <div class="text-center">
+      <div class="text-dim" style="font-size:0.7rem;margin-bottom:0.3rem">TYPICAL HOURS</div>
+      <div class="text-cyan font-display" style="font-size:1.3rem">{{ baseline.typical_start_hour }}:00 — {{ baseline.typical_end_hour }}:00</div>
+    </div>
+    <div class="text-center">
+      <div class="text-dim" style="font-size:0.7rem;margin-bottom:0.3rem">AVG VISIT DURATION</div>
+      <div class="text-cyan font-display" style="font-size:1.3rem">{{ baseline.avg_visit_duration | duration }}</div>
+    </div>
+    <div class="text-center">
+      <div class="text-dim" style="font-size:0.7rem;margin-bottom:0.3rem">VISITS / DAY</div>
+      <div class="text-cyan font-display" style="font-size:1.3rem">{{ baseline.avg_visits_per_day }}</div>
+    </div>
+    <div class="text-center">
+      <div class="text-dim" style="font-size:0.7rem;margin-bottom:0.3rem">TYPICAL DAYS</div>
+      <div class="text-cyan" style="font-size:0.85rem">
+        {% set day_names = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
+        {% if baseline.typical_days %}
+          {% for d in baseline.typical_days.split(',') %}{{ day_names[d|int] }}{% if not loop.last %}, {% endif %}{% endfor %}
+        {% else %}—{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Frigate correlated events -->
+{% if frigate_events %}
+<div class="card mb-1">
+  <div class="card-header">Correlated Frigate Events <span class="text-magenta">({{ frigate_events | length }})</span></div>
+  <div style="display:flex;flex-wrap:wrap;gap:1rem">
+    {% for fe in frigate_events %}
+    <div style="text-align:center">
+      {% if fe.snapshot_path %}
+      {% set fname = fe.snapshot_path.split('/')[-1] %}
+      <a href="/snapshots/{{ fname }}" target="_blank">
+        <img src="/snapshots/{{ fname }}" class="snapshot" style="max-width:180px;max-height:130px" alt="{{ fe.label }}" loading="lazy">
+      </a>
+      {% endif %}
+      <div style="font-size:0.72rem;margin-top:0.3rem">
+        <span class="badge badge-magenta">{{ fe.label }}</span>
+        <span class="text-dim">{{ fe.camera }}</span><br>
+        <span class="text-muted">{{ fe.timestamp | localtime }}</span>
+        {% if fe.correlation_confidence %}<br><span class="text-cyan">{{ "%.0f%%" | format(fe.correlation_confidence * 100) }} match</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Visit history -->
+<div class="card mb-1">
+  <div class="card-header">Visit History <span class="text-dim">({{ visits | length }})</span></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Arrived</th>
+        <th>Departed</th>
+        <th>Duration</th>
+        <th>Peak RSSI</th>
+        <th>Events</th>
+      </tr></thead>
+      <tbody>
+        {% for v in visits %}
+        <tr>
+          <td>{{ v.arrived_at | localtime }}</td>
+          <td>{% if v.departed_at %}{{ v.departed_at | localtime }}{% else %}<span class="badge badge-green">PRESENT</span>{% endif %}</td>
+          <td>{{ v.duration_seconds | duration }}</td>
+          <td>{% if v.max_rssi %}{{ v.max_rssi }} dBm{% else %}—{% endif %}</td>
+          <td class="text-center">{{ v.event_count or 0 }}</td>
+        </tr>
+        {% endfor %}
+        {% if not visits %}
+        <tr><td colspan="5" class="empty-state">No visits recorded</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Event history -->
+<div class="card">
+  <div class="card-header">Event Log <span class="text-dim">({{ events | length }})</span></div>
+  <div class="table-wrap" style="max-height:400px;overflow-y:auto">
+    <table>
+      <thead><tr>
+        <th>Time</th>
+        <th>Type</th>
+        <th>Source</th>
+        <th>Details</th>
+      </tr></thead>
+      <tbody>
+        {% for evt in events %}
+        <tr>
+          <td class="text-dim" style="white-space:nowrap">{{ evt.timestamp | localtime }}</td>
+          <td><span class="badge evt-{{ evt.event_type }}">{{ evt.event_type | replace("_", " ") }}</span></td>
+          <td class="text-muted">{{ evt.source or '—' }}</td>
+          <td class="text-dim" style="font-size:0.78rem">
+            {% if evt.ssid %}{{ evt.ssid }} {% endif %}
+            {% if evt.rssi %}{{ evt.rssi }} dBm {% endif %}
+            {% if evt.channel %}CH{{ evt.channel }} {% endif %}
+            {% if evt.camera %}{{ evt.camera }}{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function saveTag(e) {
+  e.preventDefault();
+  const status = document.getElementById('save-status');
+  const deviceId = {{ device.id }};
+
+  // Save tag
+  fetch('/api/devices/' + deviceId + '/tag', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      category: document.getElementById('tag-category').value,
+      label: document.getElementById('tag-label').value,
+      flagged: document.getElementById('tag-flagged').value,
+      notes: document.getElementById('tag-notes').value
+    })
+  }).then(function(r){ return r.json(); }).then(function(d){
+    // Save alias
+    return fetch('/api/devices/' + deviceId + '/alias', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ alias: document.getElementById('device-alias-input').value })
+    });
+  }).then(function(r){ return r.json(); }).then(function(d){
+    status.textContent = 'Saved';
+    status.style.color = 'var(--green)';
+    setTimeout(function(){ status.textContent = ''; }, 3000);
+  }).catch(function(err){
+    status.textContent = 'Error: ' + err;
+    status.style.color = 'var(--magenta)';
+  });
+
+  return false;
+}
+</script>
+{% endblock %}

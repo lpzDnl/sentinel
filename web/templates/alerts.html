@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %} — Alert History{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>ALERT HISTORY</h1>
+  <span class="subtitle">{{ total }} alerts logged</span>
+</div>
+
+<form class="filter-bar" method="get">
+  <select name="level">
+    <option value="">All levels</option>
+    <option value="green" {% if level_filter == 'green' %}selected{% endif %}>GREEN</option>
+    <option value="yellow" {% if level_filter == 'yellow' %}selected{% endif %}>YELLOW</option>
+    <option value="red" {% if level_filter == 'red' %}selected{% endif %}>RED</option>
+  </select>
+  <select name="type">
+    <option value="">All alert types</option>
+    {% for t in alert_types %}
+    <option value="{{ t }}" {% if type_filter == t %}selected{% endif %}>{{ t | replace("_", " ") }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="btn btn-cyan">Filter</button>
+  {% if type_filter or level_filter %}<a href="/alerts" class="btn">Clear</a>{% endif %}
+</form>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Timestamp</th>
+        <th>Level</th>
+        <th>Type</th>
+        <th>Channel</th>
+        <th>Status</th>
+        <th>Message</th>
+      </tr></thead>
+      <tbody>
+        {% for alert in alerts %}
+        {% set parts = alert.alert_type.split(':', 1) %}
+        {% set lvl = parts[0] if parts | length > 1 else '' %}
+        {% set atype = parts[1] if parts | length > 1 else alert.alert_type %}
+        <tr>
+          <td style="white-space:nowrap"><span class="text-dim">{{ alert.timestamp | localtime }}</span></td>
+          <td>
+            {% if lvl == 'red' %}
+            <span class="badge badge-magenta">RED</span>
+            {% elif lvl == 'yellow' %}
+            <span class="badge badge-yellow">YELLOW</span>
+            {% elif lvl == 'green' %}
+            <span class="badge badge-green">GREEN</span>
+            {% else %}
+            <span class="badge badge-dim">{{ lvl or '—' }}</span>
+            {% endif %}
+          </td>
+          <td><span class="badge evt-{{ atype }}">{{ atype | replace("_", " ") }}</span></td>
+          <td><span class="badge badge-dim">{{ alert.channel or 'system' }}</span></td>
+          <td>
+            {% if alert.delivered %}
+            <span class="badge badge-green">OK</span>
+            {% elif alert.error and 'cooldown' in alert.error %}
+            <span class="badge badge-yellow">COOLDOWN</span>
+            {% elif alert.error and 'disabled' in alert.error %}
+            <span class="badge badge-dim">DISABLED</span>
+            {% elif alert.error and 'rate' in alert.error %}
+            <span class="badge badge-orange">RATE LTD</span>
+            {% elif alert.error %}
+            <span class="badge badge-magenta">FAILED</span>
+            {% else %}
+            <span class="badge badge-dim">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="text-dim truncate" style="max-width:500px" title="{{ alert.message | e }}">
+              {{ alert.message | truncate(100) | e }}
+            </span>
+            {% if alert.error and 'cooldown' not in (alert.error or '') and 'disabled' not in (alert.error or '') %}
+            <br><span class="text-muted" style="font-size:0.7rem">{{ alert.error | truncate(60) }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not alerts %}
+        <tr><td colspan="6" class="empty-state">No alerts recorded yet</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if total > per_page %}
+<div class="pagination">
+  {% if page > 1 %}<a href="?page={{ page-1 }}&type={{ type_filter }}&level={{ level_filter }}">&laquo; Prev</a>{% endif %}
+  <span class="current">Page {{ page }} of {{ ((total - 1) // per_page) + 1 }}</span>
+  {% if page * per_page < total %}<a href="?page={{ page+1 }}&type={{ type_filter }}&level={{ level_filter }}">Next &raquo;</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

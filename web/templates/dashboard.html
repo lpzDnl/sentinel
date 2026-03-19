@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %} — Command Center{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>COMMAND CENTER</h1>
+  <span class="subtitle">Real-time surveillance intelligence overview</span>
+</div>
+
+<!-- Stat cards -->
+<div class="grid grid-6 mb-1">
+  <div class="card stat-card cyan">
+    <div class="card-header">Total Devices</div>
+    <div class="card-value" id="stat-total-devices">{{ stats.total_devices }}</div>
+    <div class="card-footer">all time tracked</div>
+  </div>
+  <div class="card stat-card green">
+    <div class="card-header">Active Now</div>
+    <div class="card-value" id="stat-active">{{ stats.active_devices }}</div>
+    <div class="card-footer">within 10 min</div>
+  </div>
+  <div class="card stat-card blue">
+    <div class="card-header">Events Today</div>
+    <div class="card-value" id="stat-events">{{ stats.events_today }}</div>
+    <div class="card-footer">since midnight</div>
+  </div>
+  <div class="card stat-card purple">
+    <div class="card-header">New Devices</div>
+    <div class="card-value" id="stat-new">{{ stats.new_devices_today }}</div>
+    <div class="card-footer">first seen today</div>
+  </div>
+  <div class="card stat-card yellow">
+    <div class="card-header">Frigate Events</div>
+    <div class="card-value" id="stat-frigate">{{ stats.frigate_today }}</div>
+    <div class="card-footer">visual detections</div>
+  </div>
+  <div class="card stat-card magenta">
+    <div class="card-header">Alerts</div>
+    <div class="card-value" id="stat-alerts">{{ stats.alerts_today }}</div>
+    <div class="card-footer">triggered today</div>
+  </div>
+</div>
+
+<!-- Charts row -->
+<div class="grid grid-3-1 mb-1">
+  <div class="card">
+    <div class="card-header">24-Hour Activity</div>
+    <canvas id="chart-activity" height="85"></canvas>
+  </div>
+  <div class="card">
+    <div class="card-header">Device Types</div>
+    <canvas id="chart-types" height="170"></canvas>
+  </div>
+</div>
+
+<!-- Live feeds -->
+<div class="grid grid-2">
+  <!-- Live event feed -->
+  <div class="card">
+    <div class="card-header">Live Event Feed</div>
+    <div class="feed" id="live-feed">
+      {% for evt, dev, tag in recent_events %}
+      <div class="feed-item">
+        <span class="time">{{ evt.timestamp | localtime }}</span>
+        <span class="type"><span class="badge evt-{{ evt.event_type }}">{{ evt.event_type | replace("_", " ") }}</span></span>
+        <span class="detail">
+          {% if dev %}
+            <a href="/devices/{{ dev.id }}" class="mac">{{ dev.alias or dev.vendor or dev.mac }}</a>
+          {% else %}—{% endif %}
+          {% if tag %}
+            <span class="badge badge-tag tag-{{ tag.category }}">{{ tag.category }}{% if tag.label %} · {{ tag.label }}{% endif %}</span>
+            {% if tag.flagged %}<span class="badge badge-magenta">FLAGGED</span>{% endif %}
+          {% endif %}
+          {% if evt.camera %} &middot; {{ evt.camera }}{% endif %}
+          {% if evt.ssid %} &middot; {{ evt.ssid }}{% endif %}
+          {% if evt.rssi %} &middot; {{ evt.rssi }} dBm{% endif %}
+        </span>
+      </div>
+      {% endfor %}
+      {% if not recent_events %}
+      <div class="empty-state">No events captured yet. Start the capture services.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Active devices -->
+  <div class="card">
+    <div class="card-header">Active Devices <span class="text-cyan">({{ active_devices | length }})</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Device</th>
+          <th>Type</th>
+          <th>Tag</th>
+          <th>Last Seen</th>
+        </tr></thead>
+        <tbody>
+          {% for dev, tag in active_devices %}
+          <tr>
+            <td>
+              <a href="/devices/{{ dev.id }}" class="mac">{{ dev.mac }}</a>
+              {% if dev.alias or dev.vendor %}
+              <br><span class="text-dim" style="font-size:0.72rem">{{ dev.alias or dev.vendor }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if dev.device_type == 'wifi' %}<span class="badge badge-blue">WiFi</span>
+              {% elif dev.device_type == 'bluetooth_le' %}<span class="badge badge-purple">BLE</span>
+              {% elif dev.device_type == 'bluetooth_classic' %}<span class="badge badge-purple">BT</span>
+              {% else %}<span class="badge badge-dim">?</span>{% endif %}
+            </td>
+            <td>
+              {% if tag %}
+              <span class="tag-{{ tag.category }}">{{ tag.category }}{% if tag.label %} · {{ tag.label }}{% endif %}</span>
+              {% if tag.flagged %} <span class="badge badge-magenta">FLAGGED</span>{% endif %}
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td><span class="text-dim">{{ dev.last_seen | timeago }}</span></td>
+          </tr>
+          {% endfor %}
+          {% if not active_devices %}
+          <tr><td colspan="4" class="empty-state">No active devices</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 24h activity chart
+const actCtx = document.getElementById('chart-activity');
+if (actCtx) {
+  const hourlyData = {{ hourly_data | tojson_safe }};
+  new Chart(actCtx, {
+    type: 'bar',
+    data: {
+      labels: hourlyData.map(function(d){ return d.hour; }),
+      datasets: [{
+        data: hourlyData.map(function(d){ return d.count; }),
+        backgroundColor: function(ctx) {
+          const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
+          g.addColorStop(0, 'rgba(230,168,23,0.5)');
+          g.addColorStop(1, 'rgba(230,168,23,0.04)');
+          return g;
+        },
+        borderColor: 'rgba(230,168,23,0.7)',
+        borderWidth: 1,
+        borderRadius: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+        y: { grid: { color: 'rgba(48,54,61,0.6)' }, beginAtZero: true, ticks: { precision: 0 } }
+      }
+    }
+  });
+}
+
+// Device types doughnut
+const typeCtx = document.getElementById('chart-types');
+if (typeCtx) {
+  const types = {{ type_counts | tojson_safe }};
+  new Chart(typeCtx, {
+    type: 'doughnut',
+    data: {
+      labels: ['WiFi', 'BLE', 'BT Classic', 'Unknown'],
+      datasets: [{
+        data: [types.wifi || 0, types.bluetooth_le || 0, types.bluetooth_classic || 0, types.unknown || 0],
+        backgroundColor: ['rgba(88,166,255,0.65)', 'rgba(188,140,255,0.65)', 'rgba(163,113,247,0.55)', 'rgba(110,118,129,0.4)'],
+        borderColor: ['#58a6ff', '#bc8cff', '#a371f7', '#6e7681'],
+        borderWidth: 1,
+      }]
+    },
+    options: {
+      responsive: true,
+      cutout: '65%',
+      plugins: {
+        legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true, pointStyle: 'rectRounded' } }
+      }
+    }
+  });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %} — Event Timeline{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>EVENT TIMELINE</h1>
+  <span class="subtitle">{{ total }} events recorded</span>
+</div>
+
+<form class="filter-bar" method="get">
+  <select name="type">
+    <option value="">All event types</option>
+    {% for t in event_types %}
+    <option value="{{ t }}" {% if type_filter == t %}selected{% endif %}>{{ t | replace("_", " ") }}</option>
+    {% endfor %}
+  </select>
+  <select name="camera">
+    <option value="">All cameras</option>
+    {% for c in cameras %}
+    <option value="{{ c }}" {% if camera_filter == c %}selected{% endif %}>{{ c }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="btn btn-cyan">Filter</button>
+  {% if type_filter or camera_filter %}
+  <a href="/timeline" class="btn">Clear</a>
+  {% endif %}
+</form>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Timestamp</th>
+        <th>Event</th>
+        <th>Device</th>
+        <th>Tag</th>
+        <th>Details</th>
+        <th>Snapshot</th>
+      </tr></thead>
+      <tbody>
+        {% for evt, dev, tag in events %}
+        <tr>
+          <td style="white-space:nowrap">
+            <span class="text-dim">{{ evt.timestamp | localtime }}</span>
+          </td>
+          <td><span class="badge evt-{{ evt.event_type }}">{{ evt.event_type | replace("_", " ") }}</span></td>
+          <td>
+            {% if dev %}
+            <a href="/devices/{{ dev.id }}" class="mac">{{ dev.alias or dev.vendor or dev.mac }}</a>
+            <br><span class="text-muted" style="font-size:0.7rem">{{ dev.mac }}</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td>
+            {% if tag %}
+            <span class="badge badge-tag tag-{{ tag.category }}">{{ tag.category }}{% if tag.label %} · {{ tag.label }}{% endif %}</span>
+            {% if tag.flagged %} <span class="badge badge-magenta">FLAGGED</span>{% endif %}
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="text-dim" style="font-size:0.78rem">
+            {% if evt.camera %}<span class="badge badge-dim">{{ evt.camera }}</span> {% endif %}
+            {% if evt.ssid %}SSID: <span class="text-blue">{{ evt.ssid }}</span> {% endif %}
+            {% if evt.rssi %}{{ evt.rssi }} dBm {% endif %}
+            {% if evt.channel %}CH {{ evt.channel }} {% endif %}
+            {% if evt.confidence %}conf: {{ "%.0f%%" | format(evt.confidence * 100) }}{% endif %}
+          </td>
+          <td>
+            {% if evt.snapshot_path %}
+            {% set fname = evt.snapshot_path.split('/')[-1] %}
+            <a href="/snapshots/{{ fname }}" target="_blank">
+              <img src="/snapshots/{{ fname }}" class="snapshot" style="max-width:120px;max-height:80px" alt="snapshot" loading="lazy">
+            </a>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not events %}
+        <tr><td colspan="6" class="empty-state">No events match your filters</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if total > per_page %}
+<div class="pagination">
+  {% if page > 1 %}<a href="?page={{ page-1 }}&type={{ type_filter }}&camera={{ camera_filter }}">&laquo; Prev</a>{% endif %}
+  <span class="current">Page {{ page }} of {{ ((total - 1) // per_page) + 1 }}</span>
+  {% if page * per_page < total %}<a href="?page={{ page+1 }}&type={{ type_filter }}&camera={{ camera_filter }}">Next &raquo;</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

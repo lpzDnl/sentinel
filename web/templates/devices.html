@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %} — Device Registry{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>DEVICE REGISTRY</h1>
+  <span class="subtitle">{{ total }} devices tracked</span>
+</div>
+
+<form class="filter-bar" method="get">
+  <input type="text" name="q" placeholder="Search MAC, vendor, alias..." value="{{ search }}" style="min-width:260px">
+  <select name="tag">
+    <option value="">All tags</option>
+    {% for cat in ['resident','neighbor','delivery','visitor','unknown','flagged','ignore'] %}
+    <option value="{{ cat }}" {% if tag_filter == cat %}selected{% endif %}>{{ cat }}</option>
+    {% endfor %}
+  </select>
+  <select name="type">
+    <option value="">All types</option>
+    <option value="wifi" {% if type_filter == 'wifi' %}selected{% endif %}>WiFi</option>
+    <option value="bluetooth_le" {% if type_filter == 'bluetooth_le' %}selected{% endif %}>BLE</option>
+    <option value="bluetooth_classic" {% if type_filter == 'bluetooth_classic' %}selected{% endif %}>BT Classic</option>
+  </select>
+  <button type="submit" class="btn btn-cyan">Filter</button>
+  {% if search or tag_filter or type_filter %}
+  <a href="/devices" class="btn">Clear</a>
+  {% endif %}
+</form>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Status</th>
+        <th>MAC Address</th>
+        <th>Type</th>
+        <th>Vendor / Alias</th>
+        <th>Tag</th>
+        <th>First Seen</th>
+        <th>Last Seen</th>
+        <th>Sightings</th>
+      </tr></thead>
+      <tbody>
+        {% for dev, tag in devices %}
+        <tr>
+          <td>
+            {% if dev.last_seen | is_active %}
+              <span class="live-dot" title="Active"></span>
+            {% else %}
+              <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--text-muted)" title="Inactive"></span>
+            {% endif %}
+          </td>
+          <td class="mac">
+            <a href="/devices/{{ dev.id }}">{{ dev.mac }}</a>
+            {% if dev.is_randomized %}<span class="badge badge-dim" title="Randomized MAC">RND</span>{% endif %}
+          </td>
+          <td>
+            {% if dev.device_type == 'wifi' %}<span class="badge badge-blue">WiFi</span>
+            {% elif dev.device_type == 'bluetooth_le' %}<span class="badge badge-purple">BLE</span>
+            {% elif dev.device_type == 'bluetooth_classic' %}<span class="badge badge-purple">BT</span>
+            {% else %}<span class="badge badge-dim">UNK</span>{% endif %}
+          </td>
+          <td>
+            {% if dev.alias %}<span class="text-cyan">{{ dev.alias }}</span>
+            {% elif dev.hostname %}<span class="text-dim">{{ dev.hostname }}</span>
+            {% elif dev.vendor %}<span class="text-dim">{{ dev.vendor | truncate(30) }}</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td>
+            {% if tag %}
+              <span class="tag-{{ tag.category }}">{{ tag.category }}</span>
+              {% if tag.label %}<br><span class="text-dim" style="font-size:0.7rem">{{ tag.label | truncate(25) }}</span>{% endif %}
+              {% if tag.flagged %}<span class="badge badge-magenta">!</span>{% endif %}
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td><span class="text-dim">{{ dev.first_seen | localtime }}</span></td>
+          <td><span class="text-dim">{{ dev.last_seen | timeago }}</span></td>
+          <td class="text-center"><span class="text-cyan">{{ dev.total_sightings }}</span></td>
+        </tr>
+        {% endfor %}
+        {% if not devices %}
+        <tr><td colspan="8" class="empty-state">No devices match your filters</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if total > per_page %}
+<div class="pagination">
+  {% if page > 1 %}<a href="?page={{ page-1 }}&q={{ search }}&tag={{ tag_filter }}&type={{ type_filter }}">&laquo; Prev</a>{% endif %}
+  <span class="current">Page {{ page }} of {{ ((total - 1) // per_page) + 1 }}</span>
+  {% if page * per_page < total %}<a href="?page={{ page+1 }}&q={{ search }}&tag={{ tag_filter }}&type={{ type_filter }}">Next &raquo;</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Inject now_utc for status indicator (Jinja2 can't easily do datetime math)
+// Status dots are computed server-side via the template
+</script>
+{% endblock %}

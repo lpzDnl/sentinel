@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %} — Baselines{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>NEIGHBORHOOD BASELINES</h1>
+  <span class="subtitle">Behavioral pattern analysis</span>
+</div>
+
+<!-- Activity heatmap -->
+<div class="card mb-1">
+  <div class="card-header">Activity Heatmap <span class="text-dim">— arrivals by hour &amp; day</span></div>
+  <div class="heatmap" id="heatmap">
+    <!-- Header row -->
+    <div class="heatmap-label"></div>
+    {% set days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
+    {% for d in days %}
+    <div class="heatmap-label text-center">{{ d }}</div>
+    {% endfor %}
+    <!-- Data rows -->
+    {% for hour in range(24) %}
+    <div class="heatmap-label">{{ "%02d" | format(hour) }}:00</div>
+    {% for day in range(7) %}
+    {% set val = heatmap[hour][day] %}
+    {% set max_val = heatmap | map('max') | max or 1 %}
+    {% set intensity = (val / max_val) if max_val > 0 else 0 %}
+    <div class="heatmap-cell" style="background:rgba(63,185,80,{{ (intensity * 0.65 + 0.06) if val > 0 else 0.04 }})"
+         title="{{ "%02d:00 %s: %d arrivals" | format(hour, days[day], val) }}">
+      {% if val > 0 %}{{ val }}{% endif %}
+    </div>
+    {% endfor %}
+    {% endfor %}
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <!-- Top visitors chart -->
+  <div class="card">
+    <div class="card-header">Top Visitors by Frequency</div>
+    {% if top_visitors %}
+    <canvas id="chart-visitors" height="200"></canvas>
+    {% else %}
+    <div class="empty-state">Not enough visit data for ranking</div>
+    {% endif %}
+  </div>
+
+  <!-- Baseline profiles -->
+  <div class="card">
+    <div class="card-header">Device Baselines <span class="text-dim">({{ baselines | length }})</span></div>
+    {% if baselines %}
+    <div class="table-wrap" style="max-height:450px;overflow-y:auto">
+      <table>
+        <thead><tr>
+          <th>Device</th>
+          <th>Tag</th>
+          <th>Hours</th>
+          <th>Avg Duration</th>
+          <th>Visits/Day</th>
+        </tr></thead>
+        <tbody>
+          {% for bl, dev, tag in baselines %}
+          <tr>
+            <td>
+              <a href="/devices/{{ dev.id }}" class="mac">{{ dev.alias or dev.vendor or dev.mac }}</a>
+              <br><span class="text-muted" style="font-size:0.68rem">{{ dev.mac }}</span>
+            </td>
+            <td>
+              {% if tag %}<span class="tag-{{ tag.category }}">{{ tag.category }}</span>{% endif %}
+            </td>
+            <td class="text-cyan">
+              {% if bl.typical_start_hour is not none %}
+              {{ "%02d" | format(bl.typical_start_hour) }}:00–{{ "%02d" | format(bl.typical_end_hour) }}:00
+              {% else %}—{% endif %}
+            </td>
+            <td>{{ bl.avg_visit_duration | duration }}</td>
+            <td class="text-center text-cyan">{{ bl.avg_visits_per_day or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">No baselines computed yet. Baselines build automatically over time.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+{% if top_visitors %}
+const visCtx = document.getElementById('chart-visitors');
+if (visCtx) {
+  const visitors = {{ top_visitors | map(attribute=2) | list | tojson_safe }};
+  const labels = [{% for dev, tag, count in top_visitors %}'{{ (dev.alias or dev.vendor or dev.mac) | truncate(20) }}'{% if not loop.last %},{% endif %}{% endfor %}];
+
+  new Chart(visCtx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: visitors,
+        backgroundColor: function(ctx) {
+          var colors = ['rgba(230,168,23,0.65)','rgba(63,185,80,0.65)','rgba(88,166,255,0.65)','rgba(188,140,255,0.6)','rgba(210,153,34,0.6)','rgba(248,81,73,0.55)','rgba(240,136,62,0.55)'];
+          return colors[ctx.dataIndex % colors.length];
+        },
+        borderWidth: 0,
+        borderRadius: 3,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: 'rgba(48,54,61,0.6)' }, beginAtZero: true, ticks: { precision: 0 } },
+        y: { grid: { display: false }, ticks: { font: { size: 10 } } }
+      }
+    }
+  });
+}
+{% endif %}
+</script>
+{% endblock %}
