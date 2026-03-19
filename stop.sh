@@ -7,7 +7,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-SERVICES=(sentinel-wifi sentinel-bt sentinel-frigate sentinel-web)
+SERVICES=(sentinel-wifi sentinel-bt sentinel-sdr sentinel-frigate sentinel-web)
 
 echo -e "${RED}=== SENTINEL Stopping ===${NC}"
 
