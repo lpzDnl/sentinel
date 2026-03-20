@@ -26,14 +26,14 @@
 
 <div class="card">
   <div class="table-wrap">
-    <table>
+    <table id="tbl-alerts">
       <thead><tr>
         <th>Timestamp</th>
         <th>Level</th>
         <th>Type</th>
         <th>Channel</th>
         <th>Status</th>
-        <th>Message</th>
+        <th data-nosort>Message</th>
       </tr></thead>
       <tbody>
         {% for alert in alerts %}
@@ -95,4 +95,10 @@
   {% if page * per_page < total %}<a href="?page={{ page+1 }}&type={{ type_filter }}&level={{ level_filter }}">Next &raquo;</a>{% endif %}
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+initSortable('tbl-alerts');
+</script>
 {% endblock %}

@@ -29,9 +29,9 @@
 
 <div class="card">
   <div class="table-wrap">
-    <table>
+    <table id="tbl-devices">
       <thead><tr>
-        <th>Status</th>
+        <th data-nosort>Status</th>
         <th>MAC Address</th>
         <th>Type</th>
         <th>Vendor / Alias</th>
@@ -74,8 +74,12 @@
             {% else %}<span class="text-muted">—</span>{% endif %}
           </td>
           <td><span class="text-dim">{{ dev.first_seen | localtime }}</span></td>
-          <td><span class="text-dim">{{ dev.last_seen | timeago }}</span></td>
-          <td class="text-center"><span class="text-cyan">{{ dev.total_sightings }}</span></td>
+          <td data-val="{{ dev.last_seen.isoformat() if dev.last_seen else '' }}">
+            <span class="text-dim">{{ dev.last_seen | timeago }}</span>
+          </td>
+          <td class="text-center" data-val="{{ dev.total_sightings }}">
+            <span class="text-cyan">{{ dev.total_sightings }}</span>
+          </td>
         </tr>
         {% endfor %}
         {% if not devices %}
@@ -97,7 +101,6 @@
 
 {% block scripts %}
 <script>
-// Inject now_utc for status indicator (Jinja2 can't easily do datetime math)
-// Status dots are computed server-side via the template
+initSortable('tbl-devices');
 </script>
 {% endblock %}

@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %} — SDR Signals{% endblock %}
+
+{% block extra_css %}
+<style>
+.sdr-class-tpms     { background: rgba(210,153,34,0.15);  color: var(--yellow);  border: 1px solid rgba(210,153,34,0.3); }
+.sdr-class-weather  { background: rgba(88,166,255,0.15);  color: var(--blue);    border: 1px solid rgba(88,166,255,0.3); }
+.sdr-class-keyfob   { background: rgba(240,136,62,0.15);  color: var(--orange);  border: 1px solid rgba(240,136,62,0.3); }
+.sdr-class-security { background: rgba(248,81,73,0.15);   color: var(--red);     border: 1px solid rgba(248,81,73,0.3); }
+.sdr-class-power    { background: rgba(63,185,80,0.15);   color: var(--green);   border: 1px solid rgba(63,185,80,0.3); }
+.sdr-class-other    { background: rgba(110,118,129,0.12); color: var(--text-dim);border: 1px solid rgba(110,118,129,0.2); }
+
+.rssi-strong { color: var(--green); }
+.rssi-medium { color: var(--yellow); }
+.rssi-weak   { color: var(--red); }
+
+.freq-mhz { color: var(--text-dim); font-size: 0.75rem; }
+
+.sdr-tag-cell { cursor: pointer; }
+.sdr-tag-cell:hover .sdr-edit-icon { opacity: 1; }
+.sdr-edit-icon {
+  opacity: 0; margin-left: 5px; font-size: 0.7rem;
+  color: var(--text-muted); transition: opacity 0.15s;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>SDR SIGNALS</h1>
+  <span class="subtitle">{{ total }} signals captured</span>
+</div>
+
+{# Class breakdown stat row #}
+{% set classes = [
+  ('tpms',     'TPMS',     'yellow'),
+  ('weather',  'Weather',  'blue'),
+  ('keyfob',   'Key Fob',  'amber'),
+  ('security', 'Security', 'red'),
+  ('power',    'Power',    'green'),
+  ('other',    'Other',    'dim'),
+] %}
+<div class="grid grid-6 mb-1">
+  {% for cls, label, color in classes %}
+  <a href="/sdr?class={{ cls }}" style="text-decoration:none">
+    <div class="card stat-card {{ color }}" style="cursor:pointer" title="Filter by {{ label }}">
+      <div class="card-header">{{ label }}</div>
+      <div class="card-value">{{ class_counts.get(cls, 0) }}</div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+<form class="filter-bar" method="get">
+  <select name="class">
+    <option value="">All classes</option>
+    {% for cls, label, _ in classes %}
+    <option value="{{ cls }}" {% if class_filter == cls %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="btn btn-cyan">Filter</button>
+  {% if class_filter %}
+  <a href="/sdr" class="btn">Clear</a>
+  {% endif %}
+  <span class="text-muted" style="margin-left:auto;font-size:0.72rem">
+    Live — new signals prepend automatically &middot; click column headers to sort &middot; click tag cell to label
+  </span>
+</form>
+
+<div class="card">
+  <div class="table-wrap">
+    <table id="tbl-sdr">
+      <thead><tr>
+        <th>Timestamp</th>
+        <th>Class</th>
+        <th>Model</th>
+        <th>Device UID</th>
+        <th>Frequency</th>
+        <th>RSSI</th>
+        <th>SNR</th>
+        <th>Protocol</th>
+        <th data-nosort>Tag</th>
+      </tr></thead>
+      <tbody id="sdr-tbody">
+        {% for sig in signals %}
+        {% set stag = sdr_tags.get(sig.device_uid) %}
+        <tr>
+          <td data-val="{{ sig.timestamp.timestamp() if sig.timestamp else 0 }}"
+              style="white-space:nowrap">
+            <span class="text-dim">{{ sig.timestamp | localtime }}</span>
+          </td>
+          <td>
+            <span class="badge sdr-class-{{ sig.signal_class }}">{{ sig.signal_class or '—' }}</span>
+          </td>
+          <td class="text-amber">{{ sig.model or '—' }}</td>
+          <td>
+            <span class="text-dim" style="font-size:0.75rem">{{ sig.device_uid or '—' }}</span>
+          </td>
+          <td data-val="{{ sig.frequency or 0 }}">
+            {% if sig.frequency %}
+            <span class="freq-mhz">{{ "%.1f" | format(sig.frequency / 1e6) }} MHz</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td data-val="{{ sig.rssi if sig.rssi is not none else -999 }}">
+            {% if sig.rssi is not none %}
+              {% if sig.rssi >= -60 %}<span class="rssi-strong">{{ "%.0f" | format(sig.rssi) }} dBm</span>
+              {% elif sig.rssi >= -80 %}<span class="rssi-medium">{{ "%.0f" | format(sig.rssi) }} dBm</span>
+              {% else %}<span class="rssi-weak">{{ "%.0f" | format(sig.rssi) }} dBm</span>{% endif %}
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td data-val="{{ sig.snr if sig.snr is not none else -999 }}">
+            {% if sig.snr is not none %}
+            <span class="text-dim">{{ "%.1f" | format(sig.snr) }} dB</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td data-val="{{ sig.protocol if sig.protocol is not none else -1 }}">
+            {% if sig.protocol is not none %}
+            <span class="text-muted">{{ sig.protocol }}</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="sdr-tag-cell"
+              data-uid="{{ sig.device_uid | e }}"
+              data-category="{{ stag.category if stag else 'unknown' }}"
+              data-label="{{ stag.label if stag and stag.label else '' }}"
+              data-flagged="{{ 'true' if stag and stag.flagged else 'false' }}"
+              onclick="openSdrTagPanel(this)"
+              title="Click to tag this device">
+            <span class="sdr-tag-display">
+              {% if stag and stag.label %}
+                <span class="tag-{{ stag.category }}">{{ stag.label }}</span>
+                {% if stag.flagged %} <span class="badge badge-red">!</span>{% endif %}
+              {% elif stag and stag.category != 'unknown' %}
+                <span class="tag-{{ stag.category }}">{{ stag.category }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+              <span class="sdr-edit-icon">✎</span>
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not signals %}
+        <tr><td colspan="9" class="empty-state">No SDR signals recorded yet — ensure sentinel-sdr is running</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if total > per_page %}
+<div class="pagination">
+  {% if page > 1 %}<a href="?page={{ page-1 }}&class={{ class_filter }}">&laquo; Prev</a>{% endif %}
+  <span class="current">Page {{ page }} of {{ ((total - 1) // per_page) + 1 }}</span>
+  {% if page * per_page < total %}<a href="?page={{ page+1 }}&class={{ class_filter }}">Next &raquo;</a>{% endif %}
+</div>
+{% endif %}
+
+<!-- SDR Device Tag Editor -->
+<div id="sdr-tag-panel" class="card mt-1" style="display:none">
+  <div class="card-header">
+    Tag SDR Device &mdash; <span id="sdr-tag-uid-display" class="text-amber"></span>
+  </div>
+  <form id="sdr-tag-form" onsubmit="return saveSdrTag(event)">
+    <input type="hidden" id="sdr-tag-uid-val">
+    <div class="form-row" style="align-items:flex-end;flex-wrap:wrap">
+      <div class="form-group" style="flex:0 0 160px;min-width:120px">
+        <label>Category</label>
+        <select id="sdr-tag-category">
+          {% for cat in ['unknown','resident','neighbor','delivery','visitor','flagged','ignore'] %}
+          <option value="{{ cat }}">{{ cat | upper }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="flex:1;min-width:200px">
+        <label>Label</label>
+        <input type="text" id="sdr-tag-label" placeholder="e.g. My Car TPMS, Backyard weather station">
+      </div>
+      <div class="form-group" style="flex:0 0 110px;min-width:90px">
+        <label>Flagged</label>
+        <select id="sdr-tag-flagged">
+          <option value="false">No</option>
+          <option value="true">Yes — THREAT</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:0 0 auto;margin-bottom:0.7rem;display:flex;gap:0.4rem">
+        <button type="submit" class="btn btn-cyan">Save</button>
+        <button type="button" class="btn" onclick="closeSdrTagPanel()">Cancel</button>
+      </div>
+    </div>
+    <span id="sdr-tag-status" style="font-size:0.78rem"></span>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SDR_CLASS_FILTER = '{{ class_filter }}';
+
+// ---- Tag editor ----
+function openSdrTagPanel(cell) {
+  var uid = cell.dataset.uid;
+  document.getElementById('sdr-tag-uid-display').textContent = uid;
+  document.getElementById('sdr-tag-uid-val').value = uid;
+  document.getElementById('sdr-tag-category').value = cell.dataset.category || 'unknown';
+  document.getElementById('sdr-tag-label').value = cell.dataset.label || '';
+  document.getElementById('sdr-tag-flagged').value = cell.dataset.flagged === 'true' ? 'true' : 'false';
+  document.getElementById('sdr-tag-status').textContent = '';
+  var panel = document.getElementById('sdr-tag-panel');
+  panel.style.display = '';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  document.getElementById('sdr-tag-label').focus();
+}
+
+function closeSdrTagPanel() {
+  document.getElementById('sdr-tag-panel').style.display = 'none';
+}
+
+function saveSdrTag(e) {
+  e.preventDefault();
+  var uid = document.getElementById('sdr-tag-uid-val').value;
+  var category = document.getElementById('sdr-tag-category').value;
+  var label = document.getElementById('sdr-tag-label').value.trim();
+  var flagged = document.getElementById('sdr-tag-flagged').value === 'true';
+  var status = document.getElementById('sdr-tag-status');
+
+  fetch('/api/sdr/tag/' + encodeURIComponent(uid), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category: category, label: label, flagged: flagged })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.status !== 'ok') {
+      status.textContent = 'Error: ' + (d.message || 'unknown');
+      status.style.color = 'var(--red)';
+      return;
+    }
+    status.textContent = 'Saved';
+    status.style.color = 'var(--green)';
+
+    // Update all cells for this device_uid (multiple rows with same uid)
+    document.querySelectorAll('.sdr-tag-cell').forEach(function(cell) {
+      if (cell.dataset.uid !== uid) return;
+      cell.dataset.category = d.category;
+      cell.dataset.label = d.label || '';
+      cell.dataset.flagged = d.flagged ? 'true' : 'false';
+      var displayLabel = d.label || (d.category !== 'unknown' ? d.category : null);
+      var html = displayLabel
+        ? '<span class="tag-' + d.category + '">' + displayLabel + '</span>'
+        : '<span class="text-muted">—</span>';
+      if (d.flagged) html += ' <span class="badge badge-red">!</span>';
+      html += ' <span class="sdr-edit-icon">✎</span>';
+      cell.querySelector('.sdr-tag-display').innerHTML = html;
+    });
+
+    setTimeout(closeSdrTagPanel, 800);
+  }).catch(function(err) {
+    status.textContent = 'Error: ' + err;
+    status.style.color = 'var(--red)';
+  });
+  return false;
+}
+
+// ---- Badge helpers for live signals ----
+function sdrClassBadge(cls) {
+  return '<span class="badge sdr-class-' + (cls||'other') + '">' + (cls || '—') + '</span>';
+}
+
+function rssiSpan(rssi) {
+  if (rssi === null || rssi === undefined) return '<span class="text-muted">—</span>';
+  var cls = rssi >= -60 ? 'rssi-strong' : rssi >= -80 ? 'rssi-medium' : 'rssi-weak';
+  return '<span class="' + cls + '">' + Math.round(rssi) + ' dBm</span>';
+}
+
+// ---- Live SocketIO updates ----
+socket.on('new_sdr_signal', function(d) {
+  if (SDR_CLASS_FILTER && d.signal_class !== SDR_CLASS_FILTER) return;
+
+  var tbody = document.getElementById('sdr-tbody');
+  if (!tbody) return;
+
+  var empty = tbody.querySelector('.empty-state');
+  if (empty) empty.closest('tr').remove();
+
+  var freq = d.frequency ? (d.frequency / 1e6).toFixed(1) + ' MHz' : '—';
+  var snr  = (d.snr !== null && d.snr !== undefined) ? d.snr.toFixed(1) + ' dB' : '—';
+  var prot = (d.protocol !== null && d.protocol !== undefined) ? String(d.protocol) : '—';
+
+  var tr = document.createElement('tr');
+  tr.className = 'new-item';
+  tr.innerHTML =
+    '<td data-val="' + (d.timestamp ? new Date(d.timestamp).getTime()/1000 : 0) + '" style="white-space:nowrap">'
+      + '<span class="text-dim">' + fmtDateTime(d.timestamp) + '</span></td>'
+    + '<td>' + sdrClassBadge(d.signal_class) + '</td>'
+    + '<td class="text-amber">' + (d.model || '—') + '</td>'
+    + '<td><span class="text-dim" style="font-size:0.75rem">' + (d.device_uid || '—') + '</span></td>'
+    + '<td data-val="' + (d.frequency || 0) + '"><span class="freq-mhz">' + freq + '</span></td>'
+    + '<td data-val="' + (d.rssi !== null && d.rssi !== undefined ? d.rssi : -999) + '">'
+      + rssiSpan(d.rssi) + '</td>'
+    + '<td data-val="' + (d.snr !== null && d.snr !== undefined ? d.snr : -999) + '">'
+      + '<span class="text-dim">' + snr + '</span></td>'
+    + '<td data-val="' + (d.protocol !== null && d.protocol !== undefined ? d.protocol : -1) + '">'
+      + '<span class="text-muted">' + prot + '</span></td>'
+    + '<td class="sdr-tag-cell" data-uid="' + (d.device_uid||'') + '" '
+      + 'data-category="unknown" data-label="" data-flagged="false" '
+      + 'onclick="openSdrTagPanel(this)" title="Click to tag this device">'
+      + '<span class="sdr-tag-display"><span class="text-muted">—</span>'
+      + '<span class="sdr-edit-icon">✎</span></span></td>';
+
+  tbody.insertBefore(tr, tbody.firstChild);
+  while (tbody.rows.length > 200) tbody.deleteRow(tbody.rows.length - 1);
+});
+
+initSortable('tbl-sdr');
+</script>
+{% endblock %}

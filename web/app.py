@@ -36,6 +36,8 @@ from database import (
     Event,
     FrigateEvent,
     ProbeRequest,
+    SdrDeviceTag,
+    SdrSignal,
     Tag,
     Visit,
     get_session,
@@ -213,6 +215,7 @@ def create_app() -> tuple[Flask, SocketIO]:
             "timestamp": evt.timestamp.isoformat() if evt.timestamp else None,
             "event_type": evt.event_type,
             "source": evt.source,
+            "device_id": device.id if device else None,
             "device_mac": device.mac if device else None,
             "device_vendor": device.vendor if device else None,
             "device_alias": device.alias if device else None,
@@ -545,6 +548,57 @@ def create_app() -> tuple[Flask, SocketIO]:
         finally:
             session.close()
 
+    @app.route("/sdr")
+    def sdr():
+        session = get_session()
+        try:
+            class_filter = request.args.get("class", "").strip()
+            page = max(1, request.args.get("page", 1, type=int))
+            per_page = 100
+
+            q = session.query(SdrSignal)
+            if class_filter:
+                q = q.filter(SdrSignal.signal_class == class_filter)
+
+            total = q.count()
+            signals = (
+                q.order_by(SdrSignal.timestamp.desc())
+                .offset((page - 1) * per_page)
+                .limit(per_page)
+                .all()
+            )
+
+            from sqlalchemy import func
+            class_counts = dict(
+                session.query(SdrSignal.signal_class, func.count(SdrSignal.id))
+                .group_by(SdrSignal.signal_class)
+                .all()
+            )
+
+            # Build tag lookup keyed by device_uid for signals on this page
+            uids = list({s.device_uid for s in signals if s.device_uid})
+            sdr_tags = {}
+            if uids:
+                rows = (
+                    session.query(SdrDeviceTag)
+                    .filter(SdrDeviceTag.device_uid.in_(uids))
+                    .all()
+                )
+                sdr_tags = {t.device_uid: t for t in rows}
+
+            return render_template(
+                "sdr.html",
+                signals=signals,
+                class_filter=class_filter,
+                page=page,
+                per_page=per_page,
+                total=total,
+                class_counts=class_counts,
+                sdr_tags=sdr_tags,
+            )
+        finally:
+            session.close()
+
     # -- API routes --
 
     @app.route("/api/stats")
@@ -604,6 +658,41 @@ def create_app() -> tuple[Flask, SocketIO]:
         finally:
             session.close()
 
+    @app.route("/api/sdr/tag/<path:device_uid>", methods=["POST"])
+    def api_sdr_tag(device_uid):
+        session = get_session()
+        try:
+            data = request.get_json(silent=True) or request.form
+            stag = session.query(SdrDeviceTag).filter(SdrDeviceTag.device_uid == device_uid).first()
+            if not stag:
+                stag = SdrDeviceTag(device_uid=device_uid)
+                session.add(stag)
+
+            if "category" in data:
+                stag.category = data["category"]
+            if "label" in data:
+                stag.label = data["label"] or None
+            if "flagged" in data:
+                stag.flagged = str(data["flagged"]).lower() in ("true", "1", "yes")
+            if "notes" in data:
+                stag.notes = data["notes"] or None
+
+            stag.tagged_by = "user"
+            stag.tagged_at = datetime.now(timezone.utc)
+            session.commit()
+
+            return jsonify({
+                "status": "ok",
+                "category": stag.category,
+                "label": stag.label,
+                "flagged": stag.flagged,
+            })
+        except Exception as e:
+            session.rollback()
+            return jsonify({"status": "error", "message": str(e)}), 400
+        finally:
+            session.close()
+
     @app.route("/snapshots/<path:filename>")
     def serve_snapshot(filename):
         return send_from_directory(snapshot_dir, filename)
@@ -621,12 +710,16 @@ def create_app() -> tuple[Flask, SocketIO]:
     def background_emitter():
         """Emit real-time updates to all connected clients."""
         last_event_id = 0
-        # Seed to current max event ID
+        last_sdr_id = 0
+        # Seed to current max IDs
         session = get_session()
         try:
             row = session.query(Event.id).order_by(Event.id.desc()).first()
             if row:
                 last_event_id = row[0]
+            row = session.query(SdrSignal.id).order_by(SdrSignal.id.desc()).first()
+            if row:
+                last_sdr_id = row[0]
         finally:
             session.close()
 
@@ -649,6 +742,27 @@ def create_app() -> tuple[Flask, SocketIO]:
                 for evt, dev, tag in new_events:
                     sio.emit("new_event", serialize_event(evt, dev, tag))
                     last_event_id = evt.id
+
+                new_sdr = (
+                    session.query(SdrSignal)
+                    .filter(SdrSignal.id > last_sdr_id)
+                    .order_by(SdrSignal.id)
+                    .limit(25)
+                    .all()
+                )
+                for sig in new_sdr:
+                    sio.emit("new_sdr_signal", {
+                        "id": sig.id,
+                        "timestamp": sig.timestamp.isoformat() if sig.timestamp else None,
+                        "model": sig.model,
+                        "device_uid": sig.device_uid,
+                        "signal_class": sig.signal_class,
+                        "frequency": sig.frequency,
+                        "rssi": sig.rssi,
+                        "snr": sig.snr,
+                        "protocol": sig.protocol,
+                    })
+                    last_sdr_id = sig.id
 
             except Exception as e:
                 logger.error("Background emitter error: %s", e)

@@ -319,6 +319,7 @@ label {
   font-size: 0.78rem;
 }
 .feed-item:hover { background: var(--bg-hover); }
+.feed-item[data-href] { cursor: pointer; }
 .feed-item .time { color: var(--text-muted); font-size: 0.68rem; min-width: 55px; font-variant-numeric: tabular-nums; }
 .feed-item .type { min-width: 100px; }
 .feed-item .detail { flex: 1; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -387,6 +388,7 @@ label {
     <a href="/timeline" {% if request.path == '/timeline' %}class="active"{% endif %}>Timeline</a>
     <a href="/alerts" {% if request.path == '/alerts' %}class="active"{% endif %}>Alerts</a>
     <a href="/baselines" {% if request.path == '/baselines' %}class="active"{% endif %}>Baselines</a>
+    <a href="/sdr" {% if request.path == '/sdr' %}class="active"{% endif %}>SDR</a>
   </div>
   <div class="nav-right">
     <span id="sio-status" style="font-size:0.68rem;color:var(--text-muted)">CONNECTING</span>
@@ -487,6 +489,7 @@ socket.on('new_event', function(d) {
   if (!feed) return;
   const item = document.createElement('div');
   item.className = 'feed-item new-item';
+  if (d.device_id) item.dataset.href = '/devices/' + d.device_id;
   const devLabel = d.device_alias || d.device_vendor || d.device_mac || '—';
   var tagHtml = '';
   if (d.tag_category) {
@@ -494,9 +497,12 @@ socket.on('new_event', function(d) {
       + (d.tag_label ? ' &middot; ' + d.tag_label : '') + '</span>';
     if (d.tag_flagged) tagHtml += ' <span class="badge badge-red">FLAGGED</span>';
   }
+  const devLink = d.device_id
+    ? '<a href="/devices/' + d.device_id + '" class="mac">' + devLabel + '</a>'
+    : devLabel;
   item.innerHTML = '<span class="time">' + fmtTime(d.timestamp) + '</span>'
     + '<span class="type"><span class="badge ' + evtBadgeClass(d.event_type) + '">' + (d.event_type||'').replace(/_/g,' ') + '</span></span>'
-    + '<span class="detail">' + devLabel + tagHtml
+    + '<span class="detail">' + devLink + tagHtml
     + (d.camera ? ' &middot; ' + d.camera : '')
     + (d.ssid   ? ' &middot; ' + d.ssid   : '')
     + (d.rssi   ? ' &middot; ' + d.rssi + ' dBm' : '')
@@ -510,6 +516,55 @@ Chart.defaults.color = '#8b949e';
 Chart.defaults.borderColor = 'rgba(48,54,61,0.8)';
 Chart.defaults.font.family = "'JetBrains Mono', monospace";
 Chart.defaults.font.size = 11;
+
+// ---- Sortable tables ----
+// Call initSortable('table-id') after DOM ready to enable click-to-sort on all columns.
+// Cells can carry data-val for custom sort keys (e.g. numeric timestamps, plain numbers).
+function initSortable(tableId) {
+  var table = document.getElementById(tableId);
+  if (!table) return;
+  var ths = table.querySelectorAll('thead th');
+  ths.forEach(function(th, colIdx) {
+    if (th.dataset.nosort !== undefined) return;
+    th.style.cursor = 'pointer';
+    th.style.userSelect = 'none';
+    var ind = document.createElement('span');
+    ind.style.cssText = 'margin-left:5px;opacity:0.35;font-size:0.65rem;pointer-events:none';
+    ind.textContent = '⇅';
+    th.appendChild(ind);
+    var asc = true;
+    th.addEventListener('click', function() {
+      var tbody = table.querySelector('tbody');
+      var rows = Array.from(tbody.rows);
+      var sortable = rows.filter(function(r){ return !r.querySelector('.empty-state'); });
+      var empties = rows.filter(function(r){ return r.querySelector('.empty-state'); });
+      sortable.sort(function(a, b) {
+        var ac = a.cells[colIdx], bc = b.cells[colIdx];
+        var av = ac ? (ac.dataset.val !== undefined ? ac.dataset.val : ac.textContent.trim()) : '';
+        var bv = bc ? (bc.dataset.val !== undefined ? bc.dataset.val : bc.textContent.trim()) : '';
+        var an = parseFloat(av), bn = parseFloat(bv);
+        if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
+        return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+      sortable.concat(empties).forEach(function(r){ tbody.appendChild(r); });
+      ths.forEach(function(h){
+        var s = h.querySelector('span:last-child');
+        if (s && s !== ind) { s.textContent = '⇅'; s.style.opacity = '0.35'; }
+      });
+      ind.textContent = asc ? '↑' : '↓';
+      ind.style.opacity = '1';
+      asc = !asc;
+    });
+  });
+}
+
+// ---- Feed-row navigation ----
+// Feed items with data-href navigate on click (ignores clicks on child <a> tags).
+document.addEventListener('click', function(e) {
+  if (e.target.closest('a')) return;
+  var item = e.target.closest('.feed-item[data-href]');
+  if (item) window.location.href = item.dataset.href;
+});
 </script>
 {% block scripts %}{% endblock %}
 </body>

@@ -49,7 +49,9 @@
   </div>
   <div class="card">
     <div class="card-header">Device Types</div>
-    <canvas id="chart-types" height="170"></canvas>
+    <div style="max-width:200px;margin:0 auto;position:relative">
+      <canvas id="chart-types"></canvas>
+    </div>
   </div>
 </div>
 
@@ -60,7 +62,7 @@
     <div class="card-header">Live Event Feed</div>
     <div class="feed" id="live-feed">
       {% for evt, dev, tag in recent_events %}
-      <div class="feed-item">
+      <div class="feed-item" {% if dev %}data-href="/devices/{{ dev.id }}"{% endif %}>
         <span class="time">{{ evt.timestamp | localtime }}</span>
         <span class="type"><span class="badge evt-{{ evt.event_type }}">{{ evt.event_type | replace("_", " ") }}</span></span>
         <span class="detail">
@@ -87,7 +89,7 @@
   <div class="card">
     <div class="card-header">Active Devices <span class="text-cyan">({{ active_devices | length }})</span></div>
     <div class="table-wrap">
-      <table>
+      <table id="tbl-active">
         <thead><tr>
           <th>Device</th>
           <th>Type</th>
@@ -115,7 +117,9 @@
               {% if tag.flagged %} <span class="badge badge-magenta">FLAGGED</span>{% endif %}
               {% else %}<span class="text-muted">—</span>{% endif %}
             </td>
-            <td><span class="text-dim">{{ dev.last_seen | timeago }}</span></td>
+            <td data-val="{{ dev.last_seen.isoformat() if dev.last_seen else '' }}">
+              <span class="text-dim">{{ dev.last_seen | timeago }}</span>
+            </td>
           </tr>
           {% endfor %}
           {% if not active_devices %}
@@ -179,12 +183,16 @@ if (typeCtx) {
     },
     options: {
       responsive: true,
+      maintainAspectRatio: true,
+      aspectRatio: 1,
       cutout: '65%',
       plugins: {
-        legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true, pointStyle: 'rectRounded' } }
+        legend: { position: 'bottom', labels: { padding: 10, usePointStyle: true, pointStyle: 'rectRounded', font: { size: 11 } } }
       }
     }
   });
 }
+
+initSortable('tbl-active');
 </script>
 {% endblock %}

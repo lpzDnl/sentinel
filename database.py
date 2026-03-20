@@ -268,6 +268,23 @@ class SdrSignal(Base):
         return f"<SdrSignal {self.signal_class} {self.device_uid} @ {self.timestamp}>"
 
 
+class SdrDeviceTag(Base):
+    """User-assigned label for an SDR device identified by its stable device_uid."""
+    __tablename__ = "sdr_device_tags"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_uid = Column(String(128), unique=True, nullable=False, index=True)
+    category = Column(String(32), default="unknown")  # plain String — no DB enum, avoids migration
+    label = Column(String(255))
+    flagged = Column(Boolean, default=False)
+    notes = Column(Text)
+    tagged_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    tagged_by = Column(String(64), default="user")
+
+    def __repr__(self):
+        return f"<SdrDeviceTag {self.device_uid}: {self.category}>"
+
+
 class AlertLog(Base):
     """Record of all alerts sent."""
     __tablename__ = "alert_log"
