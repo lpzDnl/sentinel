@@ -155,6 +155,36 @@
 </div>
 {% endif %}
 
+<!-- Vehicle Correlations -->
+<div class="card mt-1">
+  <div class="card-header">
+    Vehicle Correlations
+    <span class="text-dim" style="font-weight:400;font-size:0.68rem;margin-left:0.5rem">
+      TPMS ↔ Frigate car events within 60s window
+    </span>
+    <span id="corr-count" class="text-amber" style="float:right;font-size:0.75rem"></span>
+  </div>
+  <div class="table-wrap">
+    <table id="tbl-corr">
+      <thead><tr>
+        <th>Timestamp</th>
+        <th>TPMS Device</th>
+        <th>Model</th>
+        <th data-nosort>↔</th>
+        <th>Camera</th>
+        <th>Frigate Conf</th>
+        <th>Corr Conf</th>
+        <th data-nosort>Notes</th>
+      </tr></thead>
+      <tbody id="corr-tbody">
+        <tr><td colspan="8" class="empty-state" id="corr-empty">
+          Loading correlations…
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <!-- SDR Device Tag Editor -->
 <div id="sdr-tag-panel" class="card mt-1" style="display:none">
   <div class="card-header">
@@ -310,5 +340,65 @@ socket.on('new_sdr_signal', function(d) {
 });
 
 initSortable('tbl-sdr');
+
+// ---- Vehicle Correlations ----
+function loadCorrelations() {
+  fetch('/api/sdr/correlations?limit=50')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var tbody = document.getElementById('corr-tbody');
+      var counter = document.getElementById('corr-count');
+      if (!tbody) return;
+
+      if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">'
+          + 'No correlations yet — requires RTL-SDR dongle and Frigate car detections'
+          + '</td></tr>';
+        if (counter) counter.textContent = '';
+        return;
+      }
+
+      if (counter) counter.textContent = data.length + ' match' + (data.length !== 1 ? 'es' : '');
+
+      var rows = data.map(function(c) {
+        var fconf = c.frigate_confidence !== null && c.frigate_confidence !== undefined
+          ? Math.round(c.frigate_confidence * 100) + '%' : '—';
+        var cconf = c.correlation_confidence !== null && c.correlation_confidence !== undefined
+          ? Math.round(c.correlation_confidence * 100) + '%' : '—';
+        var cconfClass = c.correlation_confidence >= 0.7 ? 'text-green'
+          : c.correlation_confidence >= 0.4 ? 'text-amber' : 'text-muted';
+        return '<tr>'
+          + '<td style="white-space:nowrap" data-val="' + (c.created_at || '') + '">'
+            + '<span class="text-dim">' + fmtDateTime(c.created_at) + '</span></td>'
+          + '<td><span class="text-amber" style="font-size:0.78rem">' + (c.device_uid || '—') + '</span></td>'
+          + '<td><span class="text-dim">' + (c.tpms_model || '—') + '</span></td>'
+          + '<td class="text-muted" style="text-align:center">↔</td>'
+          + '<td><span class="badge badge-dim">' + (c.camera || '—') + '</span></td>'
+          + '<td><span class="text-dim">' + fconf + '</span></td>'
+          + '<td data-val="' + (c.correlation_confidence || 0) + '">'
+            + '<span class="' + cconfClass + '">' + cconf + '</span></td>'
+          + '<td><span class="text-muted" style="font-size:0.72rem">' + (c.notes || '') + '</span></td>'
+          + '</tr>';
+      });
+      tbody.innerHTML = rows.join('');
+      initSortable('tbl-corr');
+    })
+    .catch(function(err) {
+      var tbody = document.getElementById('corr-tbody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-state">'
+        + 'Error loading correlations: ' + err + '</td></tr>';
+    });
+}
+
+// Load on page ready
+loadCorrelations();
+
+// Refresh correlations table whenever a new TPMS signal arrives
+socket.on('new_sdr_signal', function(d) {
+  if (d.signal_class === 'tpms') {
+    // Small delay to give the correlation thread time to write
+    setTimeout(loadCorrelations, 2000);
+  }
+});
 </script>
 {% endblock %}

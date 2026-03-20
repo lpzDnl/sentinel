@@ -285,6 +285,37 @@ class SdrDeviceTag(Base):
         return f"<SdrDeviceTag {self.device_uid}: {self.category}>"
 
 
+class SdrFrigateCorrelation(Base):
+    """Link between an SDR TPMS signal and a Frigate car detection."""
+    __tablename__ = "sdr_frigate_correlations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    sdr_signal_id = Column(
+        Integer, ForeignKey("sdr_signals.id", ondelete="SET NULL"), index=True
+    )
+    frigate_event_id = Column(
+        Integer, ForeignKey("frigate_events.id", ondelete="SET NULL"), index=True
+    )
+    correlation_window_seconds = Column(Integer)
+    confidence = Column(Float)
+    notes = Column(Text)
+
+    __table_args__ = (
+        Index(
+            "ix_sdr_frigate_pair",
+            "sdr_signal_id", "frigate_event_id",
+            unique=True,
+        ),
+    )
+
+    def __repr__(self):
+        return (
+            f"<SdrFrigateCorrelation sdr={self.sdr_signal_id} "
+            f"frigate={self.frigate_event_id} conf={self.confidence}>"
+        )
+
+
 class AlertLog(Base):
     """Record of all alerts sent."""
     __tablename__ = "alert_log"

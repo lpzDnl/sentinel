@@ -27,6 +27,8 @@ from database import (
     Device,
     Event,
     FrigateEvent,
+    SdrFrigateCorrelation,
+    SdrSignal,
     Tag,
     Visit,
     get_session,
@@ -202,6 +204,110 @@ def correlate_frigate_event(frigate_event_id: int) -> dict | None:
         logger.error("Correlation failed for frigate event %s: %s",
                      frigate_event_id, e)
         return None
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# SDR <-> Frigate correlation (TPMS + car)
+# ---------------------------------------------------------------------------
+
+def correlate_sdr_frigate(sdr_signal_id: int) -> list[dict]:
+    """Correlate a TPMS signal with Frigate car events within the time window.
+
+    Looks back and forward `sdr_frigate_window` seconds (default 60) from
+    the TPMS signal timestamp for any Frigate 'car' detections, scores by
+    time proximity, and writes unique matches to SdrFrigateCorrelation.
+
+    Skips pairs already in the table to prevent duplicates.
+
+    Returns list of newly-created correlation dicts.
+    """
+    cfg = config.get()
+    window = cfg.get("correlation", {}).get("sdr_frigate_window", 60)
+
+    session = get_session()
+    results = []
+    try:
+        sig = session.get(SdrSignal, sdr_signal_id)
+        if not sig or sig.signal_class != "tpms":
+            return results
+
+        sig_ts = _utc_aware(sig.timestamp)
+        t_lo = sig_ts - timedelta(seconds=window)
+        t_hi = sig_ts + timedelta(seconds=window)
+
+        frigate_cars = (
+            session.query(FrigateEvent)
+            .filter(
+                FrigateEvent.label == "car",
+                FrigateEvent.timestamp.between(t_lo, t_hi),
+            )
+            .all()
+        )
+
+        if not frigate_cars:
+            return results
+
+        for fe in frigate_cars:
+            fe_ts = _utc_aware(fe.timestamp)
+            delta = abs((sig_ts - fe_ts).total_seconds())
+            if delta > window:
+                continue
+
+            confidence = round(max(0.0, 1.0 - (delta / window)), 3)
+
+            # Dedup: skip if this (signal, frigate_event) pair already exists
+            already = (
+                session.query(SdrFrigateCorrelation)
+                .filter(
+                    SdrFrigateCorrelation.sdr_signal_id == sig.id,
+                    SdrFrigateCorrelation.frigate_event_id == fe.id,
+                )
+                .first()
+            )
+            if already:
+                continue
+
+            corr = SdrFrigateCorrelation(
+                sdr_signal_id=sig.id,
+                frigate_event_id=fe.id,
+                correlation_window_seconds=window,
+                confidence=confidence,
+                notes=(
+                    f"TPMS {sig.device_uid} <-> {fe.camera} car "
+                    f"({delta:.1f}s delta)"
+                ),
+            )
+            session.add(corr)
+
+            results.append({
+                "sdr_signal_id": sig.id,
+                "device_uid": sig.device_uid,
+                "model": sig.model,
+                "frigate_event_db_id": fe.id,
+                "frigate_event_id": fe.frigate_event_id,
+                "camera": fe.camera,
+                "frigate_confidence": fe.confidence,
+                "time_delta_seconds": round(delta, 1),
+                "confidence": confidence,
+            })
+
+            logger.info(
+                "SDR<->Frigate: TPMS %s <-> car on %s  delta=%.1fs  conf=%.0f%%",
+                sig.device_uid, fe.camera, delta, confidence * 100,
+            )
+
+        if results:
+            session.commit()
+
+        return results
+
+    except Exception as e:
+        session.rollback()
+        logger.error("SDR/Frigate correlation failed for signal %d: %s",
+                     sdr_signal_id, e)
+        return []
     finally:
         session.close()
 

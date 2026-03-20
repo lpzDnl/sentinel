@@ -384,17 +384,17 @@ def main():
         logger.info("Frigate connected: version %s", resp.text.strip())
     except Exception as e:
         logger.warning("Cannot reach Frigate at %s: %s (will keep trying)", client.api_url, e)
-# 
-#     # Start the event poller alongside the webhook server
-#     poller = FrigatePoller(client, poll_interval=30)
-#     poller.start()
+
+    # Start the event poller alongside the webhook server
+    poller = FrigatePoller(client, poll_interval=30)
+    poller.start()
 
     app = create_app()
 
     def shutdown(signum, frame):
         sig_name = signal.Signals(signum).name
         logger.info("Received %s, shutting down...", sig_name)
-#         poller.stop()
+        poller.stop()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown)
@@ -404,7 +404,7 @@ def main():
     logger.info("SENTINEL Frigate Webhook Receiver")
     logger.info("Listening on port %d | Frigate API: %s", port, client.api_url)
     logger.info("Watched labels: %s", client.watched_labels)
-    logger.info("Webhook-only mode (poller disabled)")
+    logger.info("Poller active (30s interval, watermark seeded to now)")
     logger.info("=" * 60)
 
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)

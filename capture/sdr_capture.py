@@ -354,7 +354,7 @@ class SdrCaptureEngine:
             self._log_stats()
 
         # Persist
-        self._write_db(
+        sig_id = self._write_db(
             timestamp   = ts,
             protocol    = protocol,
             model       = model,
@@ -369,20 +369,46 @@ class SdrCaptureEngine:
             raw_json    = line,
         )
 
+        # TPMS signals: attempt Frigate car correlation in background
+        if sig_class == "tpms" and sig_id:
+            threading.Thread(
+                target=self._correlate_tpms,
+                args=(sig_id,),
+                daemon=True,
+                name="sdr-corr",
+            ).start()
+
     # -- database write --
 
-    def _write_db(self, **kwargs):
+    def _write_db(self, **kwargs) -> int | None:
+        """Persist a decoded signal and return its new row ID, or None on error."""
         session = get_session()
         try:
-            session.add(SdrSignal(**kwargs))
+            sig = SdrSignal(**kwargs)
+            session.add(sig)
             session.commit()
             self.stats["db_writes"] += 1
+            return sig.id
         except Exception as e:
             session.rollback()
             self.stats["db_errors"] += 1
             logger.error("DB write failed: %s", e)
+            return None
         finally:
             session.close()
+
+    def _correlate_tpms(self, sig_id: int):
+        """Background thread: correlate a TPMS signal with Frigate car events."""
+        try:
+            from analysis.correlation import correlate_sdr_frigate
+            matches = correlate_sdr_frigate(sig_id)
+            if matches:
+                logger.info(
+                    "TPMS signal %d matched %d Frigate car event(s)",
+                    sig_id, len(matches),
+                )
+        except Exception as e:
+            logger.error("TPMS/Frigate correlation error: %s", e)
 
     # -- stats --
 

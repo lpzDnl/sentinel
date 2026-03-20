@@ -199,7 +199,7 @@ def format_alert(level: ThreatLevel, alert_type: str, device=None,
         now = datetime.now(ZoneInfo(tz_name))
     except Exception:
         now = datetime.now()
-    lines.append(f"\n\U0001f552 {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+#     lines.append(f"\n\U0001f552 {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
     return "\n".join(lines)
 

@@ -1,7 +1,8 @@
 # S.E.N.T.I.N.E.L.
 ### Surveillance Environment Network Threat Intelligence & Evidence Logger
 
-> *"Know your environment before your environment knows you."*
+> *"Saying you don't care about privacy because you have nothing to hide is like saying you don't care about free speech because you have nothing to say."*
+> — Edward Snowden
 
 SENTINEL is a modular, self-hosted physical security intelligence platform built on a Raspberry Pi 5. It passively monitors the RF environment, detects and tracks nearby devices via WiFi and Bluetooth, integrates with IP camera systems, correlates signals across sensors, and presents actionable intelligence through a real-time web dashboard — all locally, with no cloud dependencies.
 

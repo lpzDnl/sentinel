@@ -37,6 +37,7 @@ from database import (
     FrigateEvent,
     ProbeRequest,
     SdrDeviceTag,
+    SdrFrigateCorrelation,
     SdrSignal,
     Tag,
     Visit,
@@ -690,6 +691,41 @@ def create_app() -> tuple[Flask, SocketIO]:
         except Exception as e:
             session.rollback()
             return jsonify({"status": "error", "message": str(e)}), 400
+        finally:
+            session.close()
+
+    @app.route("/api/sdr/correlations")
+    def api_sdr_correlations():
+        session = get_session()
+        try:
+            limit = request.args.get("limit", 50, type=int)
+            rows = (
+                session.query(SdrFrigateCorrelation, SdrSignal, FrigateEvent)
+                .join(SdrSignal,
+                      SdrFrigateCorrelation.sdr_signal_id == SdrSignal.id)
+                .join(FrigateEvent,
+                      SdrFrigateCorrelation.frigate_event_id == FrigateEvent.id)
+                .order_by(SdrFrigateCorrelation.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            result = []
+            for corr, sig, fe in rows:
+                result.append({
+                    "id": corr.id,
+                    "created_at": (
+                        corr.created_at.isoformat() if corr.created_at else None
+                    ),
+                    "device_uid": sig.device_uid,
+                    "tpms_model": sig.model,
+                    "camera": fe.camera,
+                    "frigate_label": fe.label,
+                    "frigate_confidence": fe.confidence,
+                    "correlation_confidence": corr.confidence,
+                    "correlation_window_seconds": corr.correlation_window_seconds,
+                    "notes": corr.notes,
+                })
+            return jsonify(result)
         finally:
             session.close()
 
