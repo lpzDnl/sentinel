@@ -40,6 +40,7 @@ from database import (
     SdrFrigateCorrelation,
     SdrSignal,
     Tag,
+    VehicleProfile,
     Visit,
     get_session,
     init_db,
@@ -721,7 +722,71 @@ def create_app() -> tuple[Flask, SocketIO]:
         finally:
             session.close()
 
+    @app.route("/vehicles")
+    def vehicles():
+        session = get_session()
+        try:
+            profiles = (
+                session.query(VehicleProfile)
+                .order_by(VehicleProfile.sighting_count.desc())
+                .all()
+            )
+            return render_template("vehicles.html", profiles=profiles)
+        finally:
+            session.close()
+
     # -- API routes --
+
+    @app.route("/api/vehicles/<int:profile_id>", methods=["POST"])
+    def api_vehicle_update(profile_id):
+        session = get_session()
+        try:
+            profile = session.get(VehicleProfile, profile_id)
+            if not profile:
+                return jsonify({"status": "error", "message": "not found"}), 404
+            data = request.get_json(silent=True) or request.form
+            if "model" in data:
+                profile.model = (data["model"] or "").strip() or None
+            if "notes" in data:
+                profile.notes = (data["notes"] or "").strip() or None
+            session.commit()
+            return jsonify({
+                "status": "ok",
+                "model": profile.model,
+                "notes": profile.notes,
+            })
+        except Exception as e:
+            session.rollback()
+            return jsonify({"status": "error", "message": str(e)}), 400
+        finally:
+            session.close()
+
+    @app.route("/api/vehicles")
+    def api_vehicles():
+        session = get_session()
+        try:
+            profiles = (
+                session.query(VehicleProfile)
+                .order_by(VehicleProfile.sighting_count.desc())
+                .all()
+            )
+            return jsonify([
+                {
+                    "id": p.id,
+                    "sensor_id": p.sensor_id,
+                    "model": p.model,
+                    "first_seen": p.first_seen.isoformat() if p.first_seen else None,
+                    "last_seen": p.last_seen.isoformat() if p.last_seen else None,
+                    "sighting_count": p.sighting_count,
+                    "avg_rssi": p.avg_rssi,
+                    "flagged": p.flagged,
+                    "flag_reason": p.flag_reason,
+                    "notes": p.notes,
+                }
+                for p in profiles
+            ])
+        finally:
+            session.close()
 
     @app.route("/api/stats")
     def api_stats():
@@ -849,6 +914,34 @@ def create_app() -> tuple[Flask, SocketIO]:
             return jsonify(result)
         finally:
             session.close()
+
+    @app.route("/api/auto-tag", methods=["POST"])
+    def api_auto_tag():
+        """Re-run probe-pattern auto-tagging across all devices.
+
+        Returns a count of newly tagged devices.
+        Only tags devices currently categorised as 'unknown' with
+        non-randomized MACs.
+        """
+        from analysis.correlation import auto_tag_by_probes
+
+        session = get_session()
+        try:
+            device_ids = [row[0] for row in session.query(Device.id).all()]
+        finally:
+            session.close()
+
+        tagged = 0
+        for did in device_ids:
+            if auto_tag_by_probes(did):
+                tagged += 1
+
+        logger.info("api/auto-tag: tagged %d/%d devices", tagged, len(device_ids))
+        return jsonify({
+            "status": "ok",
+            "tagged": tagged,
+            "total": len(device_ids),
+        })
 
     @app.route("/snapshots/<path:filename>")
     def serve_snapshot(filename):

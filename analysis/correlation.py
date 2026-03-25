@@ -27,6 +27,7 @@ from database import (
     Device,
     Event,
     FrigateEvent,
+    ProbeRequest,
     SdrFrigateCorrelation,
     SdrSignal,
     Tag,
@@ -649,8 +650,9 @@ def evaluate_device(device_id: int) -> dict:
     )
     results["action"] = action
 
-    # Auto-tag if threshold met
-    results["auto_tagged"] = auto_tag_device(device_id)
+    # Auto-tag: probe-pattern rules first, visit-threshold fallback
+    probe_tagged = auto_tag_by_probes(device_id)
+    results["auto_tagged"] = probe_tagged or (not probe_tagged and auto_tag_device(device_id))
 
     # Recompute baseline periodically
     session = get_session()
@@ -864,6 +866,109 @@ def compute_baseline(device_id: int) -> Baseline | None:
 # ---------------------------------------------------------------------------
 # Auto-tagging
 # ---------------------------------------------------------------------------
+
+# Probe-pattern classification constants
+_RESIDENT_NETWORKS = frozenset({"valenciavalencia", "valenciavalencia.menudencia"})
+_NEIGHBOR_NETWORKS = frozenset({
+    "verizon_6z6jcd", "geturown", "trojanmade", "ortizfamily",
+    "velasquez", "spectrumsetup", "att", "netgear_orbi", "familyb", "catalpa",
+})
+_BORDER_PREFIXES = ("infinitum", "totalplay", "izzi", "telmex")
+
+
+def auto_tag_by_probes(device_id: int) -> bool:
+    """Tag a device based on its probe request SSID patterns.
+
+    Rules (applied in priority order):
+      1. Resident  — probes for any known resident network SSID.
+      2. Border commuter — probes for Mexican carrier SSIDs
+         (INFINITUM*, Totalplay*, izzi*, Telmex*).
+      3. Neighbor  — ALL probed SSIDs belong to the neighbor network set.
+
+    Skips devices already tagged with category != 'unknown' and
+    devices with randomized MACs.
+
+    Returns True if a new tag was applied.
+    """
+    session = get_session()
+    try:
+        device = session.get(Device, device_id)
+        if not device:
+            return False
+
+        if device.is_randomized:
+            return False
+
+        tag = session.query(Tag).filter(Tag.device_id == device_id).first()
+        if tag and tag.category != "unknown":
+            return False
+
+        ssid_rows = (
+            session.query(ProbeRequest.ssid)
+            .filter(
+                ProbeRequest.device_id == device_id,
+                ProbeRequest.ssid.isnot(None),
+                ProbeRequest.ssid != "",
+            )
+            .distinct()
+            .all()
+        )
+        if not ssid_rows:
+            return False
+
+        ssids = [row[0] for row in ssid_rows]
+        ssids_lower = [s.lower() for s in ssids]
+        ssids_lower_set = set(ssids_lower)
+
+        new_category = None
+        new_notes = None
+
+        # Rule 1: Resident network
+        if any(s in _RESIDENT_NETWORKS for s in ssids_lower):
+            new_category = "resident"
+            matched = [s for s in ssids if s.lower() in _RESIDENT_NETWORKS]
+            new_notes = f"Probed resident network(s): {', '.join(matched)}"
+
+        # Rule 2: Border commuter (Mexican carrier)
+        elif any(s.startswith(_BORDER_PREFIXES) for s in ssids_lower):
+            new_category = "border_commuter"
+            matched = [
+                s for s in ssids
+                if s.lower().startswith(_BORDER_PREFIXES)
+            ]
+            new_notes = f"Mexican carrier connection — probed: {', '.join(matched)}"
+
+        # Rule 3: Neighbor only (every probed SSID is a neighbor network)
+        elif ssids_lower_set.issubset(_NEIGHBOR_NETWORKS):
+            new_category = "neighbor"
+            new_notes = f"Probes only neighbor networks: {', '.join(ssids)}"
+
+        if not new_category:
+            return False
+
+        if not tag:
+            tag = Tag(device_id=device_id)
+            session.add(tag)
+
+        tag.category = new_category
+        tag.tagged_by = "auto_probe"
+        tag.tagged_at = datetime.now(timezone.utc)
+        tag.notes = new_notes
+        session.commit()
+
+        logger.info(
+            "Probe-tagged device %s as '%s': %s",
+            device.mac, new_category, new_notes,
+        )
+        return True
+
+    except Exception as e:
+        session.rollback()
+        logger.error("Probe auto-tag failed for device %d: %s", device_id, e)
+        return False
+    finally:
+        session.close()
+
 
 def auto_tag_device(device_id: int) -> bool:
     """Promote 'unknown' to 'visitor' after visit threshold."""

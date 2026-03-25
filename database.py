@@ -316,6 +316,25 @@ class SdrFrigateCorrelation(Base):
         )
 
 
+class VehicleProfile(Base):
+    """Persistent profile for a TPMS-identified vehicle."""
+    __tablename__ = "vehicle_profiles"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    sensor_id     = Column(String(128), unique=True, nullable=False, index=True)  # TPMS device_uid
+    model         = Column(String(128))           # Toyota/Ford/etc — user-assigned or inferred
+    first_seen    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen     = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    sighting_count = Column(Integer, default=0)
+    avg_rssi      = Column(Float)
+    notes         = Column(Text)
+    flagged       = Column(Boolean, default=False)
+    flag_reason   = Column(String(64))            # e.g. 'frequent_visitor'
+
+    def __repr__(self):
+        return f"<VehicleProfile {self.sensor_id} sightings={self.sighting_count}>"
+
+
 class AlertLog(Base):
     """Record of all alerts sent."""
     __tablename__ = "alert_log"

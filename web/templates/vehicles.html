@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %} — Vehicle Profiles{% endblock %}
+
+{% block extra_css %}
+<style>
+.veh-green  { color: var(--green); }
+.veh-amber  { color: var(--amber); }
+.veh-red    { color: var(--red); font-weight: 600; }
+
+.rssi-strong { color: var(--green); }
+.rssi-medium { color: var(--yellow); }
+.rssi-weak   { color: var(--red); }
+
+.flag-cell { cursor: pointer; }
+.flag-cell:hover .flag-edit-icon { opacity: 1; }
+.flag-edit-icon {
+  opacity: 0; margin-left: 5px; font-size: 0.7rem;
+  color: var(--text-muted); transition: opacity 0.15s;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>VEHICLE PROFILES</h1>
+  <span class="subtitle">{{ profiles | length }} tracked vehicle sensor{{ 's' if profiles | length != 1 else '' }}</span>
+</div>
+
+{# Summary stat row #}
+{% set total = profiles | length %}
+{% set flagged_count = profiles | selectattr('flagged') | list | length %}
+{% set frequent = profiles | selectattr('sighting_count', 'ge', 10) | list | length %}
+{% set new_count = profiles | selectattr('sighting_count', 'lt', 5) | list | length %}
+<div class="grid grid-4 mb-1">
+  <div class="card stat-card blue">
+    <div class="card-header">Total Vehicles</div>
+    <div class="card-value">{{ total }}</div>
+    <div class="card-footer">unique TPMS sensors</div>
+  </div>
+  <div class="card stat-card green">
+    <div class="card-header">Occasional</div>
+    <div class="card-value">{{ new_count }}</div>
+    <div class="card-footer">&lt; 5 sightings</div>
+  </div>
+  <div class="card stat-card amber">
+    <div class="card-header">Recurring</div>
+    <div class="card-value">{{ frequent }}</div>
+    <div class="card-footer">10+ sightings</div>
+  </div>
+  <div class="card stat-card red">
+    <div class="card-header">Flagged</div>
+    <div class="card-value">{{ flagged_count }}</div>
+    <div class="card-footer">frequent visitors</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    Vehicle Profiles
+    <span class="text-dim" style="font-weight:400;font-size:0.68rem;margin-left:0.5rem">
+      updated every 5 min by SDR capture &middot; click column headers to sort &middot; click notes to edit
+    </span>
+    <span class="text-amber" style="float:right;font-size:0.72rem">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:3px;vertical-align:middle"></span> &lt;5
+      &nbsp;
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--amber);margin-right:3px;vertical-align:middle"></span> 5–20
+      &nbsp;
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);margin-right:3px;vertical-align:middle"></span> 20+
+    </span>
+  </div>
+  <div class="table-wrap">
+    <table id="tbl-vehicles">
+      <thead><tr>
+        <th>Sensor ID</th>
+        <th>Make / Model</th>
+        <th>First Seen</th>
+        <th>Last Seen</th>
+        <th>Sightings</th>
+        <th>Avg RSSI</th>
+        <th>Flagged</th>
+        <th data-nosort>Notes</th>
+      </tr></thead>
+      <tbody>
+        {% for p in profiles %}
+        {% if p.sighting_count >= 20 %}
+          {% set row_color = 'var(--red)' %}
+          {% set sighting_class = 'veh-red' %}
+        {% elif p.sighting_count >= 5 %}
+          {% set row_color = 'var(--amber)' %}
+          {% set sighting_class = 'veh-amber' %}
+        {% else %}
+          {% set row_color = 'var(--green)' %}
+          {% set sighting_class = 'veh-green' %}
+        {% endif %}
+        <tr>
+          <td>
+            <span style="font-size:0.78rem;color:{{ row_color }};font-weight:500">{{ p.sensor_id }}</span>
+          </td>
+          <td class="flag-cell"
+              data-id="{{ p.id }}"
+              data-model="{{ p.model | e if p.model else '' }}"
+              onclick="openModelEditor(this)"
+              title="Click to set make/model">
+            <span class="model-display">
+              {% if p.model %}
+                <span class="text-amber">{{ p.model }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+              <span class="flag-edit-icon">✎</span>
+            </span>
+          </td>
+          <td data-val="{{ p.first_seen.timestamp() if p.first_seen else 0 }}"
+              style="white-space:nowrap">
+            <span class="text-dim">{{ p.first_seen | localtime }}</span>
+          </td>
+          <td data-val="{{ p.last_seen.timestamp() if p.last_seen else 0 }}"
+              style="white-space:nowrap">
+            <span class="text-dim">{{ p.last_seen | localtime }}</span>
+          </td>
+          <td data-val="{{ p.sighting_count }}">
+            <span class="{{ sighting_class }}" style="font-weight:600">{{ p.sighting_count }}</span>
+          </td>
+          <td data-val="{{ p.avg_rssi if p.avg_rssi is not none else -999 }}">
+            {% if p.avg_rssi is not none %}
+              {% if p.avg_rssi >= -60 %}<span class="rssi-strong">{{ "%.0f" | format(p.avg_rssi) }} dBm</span>
+              {% elif p.avg_rssi >= -80 %}<span class="rssi-medium">{{ "%.0f" | format(p.avg_rssi) }} dBm</span>
+              {% else %}<span class="rssi-weak">{{ "%.0f" | format(p.avg_rssi) }} dBm</span>{% endif %}
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td>
+            {% if p.flagged %}
+              <span class="badge badge-red">{{ p.flag_reason or 'flagged' }}</span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td class="flag-cell"
+              data-id="{{ p.id }}"
+              data-notes="{{ p.notes | e if p.notes else '' }}"
+              onclick="openNotesEditor(this)"
+              title="Click to add notes">
+            <span class="notes-display">
+              {% if p.notes %}
+                <span class="text-dim" style="font-size:0.75rem">{{ p.notes }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+              <span class="flag-edit-icon">✎</span>
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not profiles %}
+        <tr><td colspan="8" class="empty-state">
+          No vehicle profiles yet — requires RTL-SDR dongle with sentinel-sdr running
+        </td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Inline editor panel -->
+<div id="vehicle-editor" class="card mt-1" style="display:none">
+  <div class="card-header" id="vehicle-editor-title">Edit Vehicle</div>
+  <form onsubmit="return saveVehicle(event)">
+    <input type="hidden" id="veh-edit-id">
+    <div class="form-row" style="align-items:flex-end;flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:200px" id="veh-model-group">
+        <label>Make / Model</label>
+        <input type="text" id="veh-edit-model" placeholder="e.g. Toyota Camry, Ford F-150">
+      </div>
+      <div class="form-group" style="flex:2;min-width:250px" id="veh-notes-group">
+        <label>Notes</label>
+        <input type="text" id="veh-edit-notes" placeholder="e.g. neighbor's truck, seen daily">
+      </div>
+      <div class="form-group" style="flex:0 0 auto;margin-bottom:0.7rem;display:flex;gap:0.4rem">
+        <button type="submit" class="btn btn-cyan">Save</button>
+        <button type="button" class="btn" onclick="closeVehicleEditor()">Cancel</button>
+      </div>
+    </div>
+    <span id="veh-edit-status" style="font-size:0.78rem"></span>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var _editField = null;
+
+function openModelEditor(cell) {
+  _editField = 'model';
+  var id = cell.dataset.id;
+  document.getElementById('veh-edit-id').value = id;
+  document.getElementById('veh-edit-model').value = cell.dataset.model || '';
+  document.getElementById('veh-edit-notes').value = '';
+  document.getElementById('vehicle-editor-title').textContent = 'Edit Make / Model';
+  document.getElementById('veh-model-group').style.display = '';
+  document.getElementById('veh-notes-group').style.display = 'none';
+  document.getElementById('veh-edit-status').textContent = '';
+  var panel = document.getElementById('vehicle-editor');
+  panel.style.display = '';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  document.getElementById('veh-edit-model').focus();
+}
+
+function openNotesEditor(cell) {
+  _editField = 'notes';
+  var id = cell.dataset.id;
+  document.getElementById('veh-edit-id').value = id;
+  document.getElementById('veh-edit-model').value = '';
+  document.getElementById('veh-edit-notes').value = cell.dataset.notes || '';
+  document.getElementById('vehicle-editor-title').textContent = 'Edit Notes';
+  document.getElementById('veh-model-group').style.display = 'none';
+  document.getElementById('veh-notes-group').style.display = '';
+  document.getElementById('veh-edit-status').textContent = '';
+  var panel = document.getElementById('vehicle-editor');
+  panel.style.display = '';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  document.getElementById('veh-edit-notes').focus();
+}
+
+function closeVehicleEditor() {
+  document.getElementById('vehicle-editor').style.display = 'none';
+  _editField = null;
+}
+
+function saveVehicle(e) {
+  e.preventDefault();
+  var id = document.getElementById('veh-edit-id').value;
+  var status = document.getElementById('veh-edit-status');
+  var payload = {};
+
+  if (_editField === 'model') {
+    payload.model = document.getElementById('veh-edit-model').value.trim() || null;
+  } else {
+    payload.notes = document.getElementById('veh-edit-notes').value.trim() || null;
+  }
+
+  fetch('/api/vehicles/' + id, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.status !== 'ok') {
+      status.textContent = 'Error: ' + (d.message || 'unknown');
+      status.style.color = 'var(--red)';
+      return;
+    }
+    status.textContent = 'Saved';
+    status.style.color = 'var(--green)';
+
+    // Update the cell display in the table
+    if (_editField === 'model') {
+      document.querySelectorAll('.flag-cell[data-id="' + id + '"][data-model]').forEach(function(cell) {
+        cell.dataset.model = d.model || '';
+        var html = d.model
+          ? '<span class="text-amber">' + d.model + '</span>'
+          : '<span class="text-muted">—</span>';
+        html += ' <span class="flag-edit-icon">✎</span>';
+        cell.querySelector('.model-display').innerHTML = html;
+      });
+    } else {
+      document.querySelectorAll('.flag-cell[data-id="' + id + '"][data-notes]').forEach(function(cell) {
+        cell.dataset.notes = d.notes || '';
+        var html = d.notes
+          ? '<span class="text-dim" style="font-size:0.75rem">' + d.notes + '</span>'
+          : '<span class="text-muted">—</span>';
+        html += ' <span class="flag-edit-icon">✎</span>';
+        cell.querySelector('.notes-display').innerHTML = html;
+      });
+    }
+
+    setTimeout(closeVehicleEditor, 700);
+  }).catch(function(err) {
+    status.textContent = 'Error: ' + err;
+    status.style.color = 'var(--red)';
+  });
+  return false;
+}
+
+initSortable('tbl-vehicles');
+</script>
+{% endblock %}

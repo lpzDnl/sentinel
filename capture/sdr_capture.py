@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, "/opt/sentinel")
 
 import config
-from database import SdrSignal, get_session, init_db
+from database import SdrSignal, VehicleProfile, get_session, init_db
 
 logger = logging.getLogger("sentinel.sdr")
 
@@ -131,6 +131,7 @@ class SdrCaptureEngine:
 
         self._stop = threading.Event()
         self._proc: subprocess.Popen | None = None
+        self._profile_thread: threading.Thread | None = None
 
         self.stats = {
             "signals_decoded":  0,
@@ -159,6 +160,14 @@ class SdrCaptureEngine:
             self.ppm,
         )
         self.stats["start_time"] = time.time()
+
+        # Start background vehicle profiler (every 5 minutes)
+        self._profile_thread = threading.Thread(
+            target=self._profile_vehicles_loop,
+            daemon=True,
+            name="sdr-profiler",
+        )
+        self._profile_thread.start()
 
         while not self._stop.is_set():
             try:
@@ -394,6 +403,84 @@ class SdrCaptureEngine:
             self.stats["db_errors"] += 1
             logger.error("DB write failed: %s", e)
             return None
+        finally:
+            session.close()
+
+    # -- vehicle profiling --
+
+    _PROFILE_INTERVAL = 300  # 5 minutes
+
+    def _profile_vehicles_loop(self):
+        """Background thread: update vehicle_profiles every 5 minutes."""
+        # Initial run after a short delay to let the first signals accumulate
+        self._stop.wait(30)
+        while not self._stop.is_set():
+            try:
+                self._update_vehicle_profiles()
+            except Exception as e:
+                logger.error("Vehicle profiling error: %s", e)
+            self._stop.wait(self._PROFILE_INTERVAL)
+
+    def _update_vehicle_profiles(self):
+        """Aggregate TPMS sdr_signals into vehicle_profiles (upsert)."""
+        from sqlalchemy import func
+
+        session = get_session()
+        try:
+            rows = (
+                session.query(
+                    SdrSignal.device_uid,
+                    SdrSignal.model,
+                    func.count(SdrSignal.id).label("sightings"),
+                    func.min(SdrSignal.timestamp).label("first_seen"),
+                    func.max(SdrSignal.timestamp).label("last_seen"),
+                    func.avg(SdrSignal.rssi).label("avg_rssi"),
+                )
+                .filter(SdrSignal.signal_class == "tpms")
+                .group_by(SdrSignal.device_uid, SdrSignal.model)
+                .all()
+            )
+
+            updated = 0
+            for row in rows:
+                if not row.device_uid:
+                    continue
+
+                profile = (
+                    session.query(VehicleProfile)
+                    .filter(VehicleProfile.sensor_id == row.device_uid)
+                    .first()
+                )
+
+                if profile is None:
+                    profile = VehicleProfile(
+                        sensor_id=row.device_uid,
+                        model=row.model or None,
+                    )
+                    session.add(profile)
+
+                profile.sighting_count = row.sightings
+                profile.first_seen = row.first_seen
+                profile.last_seen = row.last_seen
+                profile.avg_rssi = round(row.avg_rssi, 1) if row.avg_rssi is not None else None
+
+                # Auto-flag frequent visitors (10+ sightings)
+                if row.sightings >= 10 and not profile.flagged:
+                    profile.flagged = True
+                    profile.flag_reason = "frequent_visitor"
+                    logger.info(
+                        "Vehicle profile flagged as frequent_visitor: %s (%d sightings)",
+                        row.device_uid, row.sightings,
+                    )
+
+                updated += 1
+
+            session.commit()
+            if updated:
+                logger.debug("Vehicle profiles updated: %d records", updated)
+        except Exception:
+            session.rollback()
+            raise
         finally:
             session.close()
 
