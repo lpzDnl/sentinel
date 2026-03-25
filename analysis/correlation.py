@@ -479,10 +479,43 @@ def classify_device_threat(device_id: int) -> tuple[ThreatLevel, str, dict]:
 
         # 7. First-time device
         if device.total_sightings == 1:
-            return (
-                ThreatLevel.GREEN, "new_device",
-                {**base, "reason": f"First-time device {mac}"},
+            # Enrich with proximity, timing, vendor, and probe context
+            latest_event = (
+                session.query(Event)
+                .filter(Event.device_id == device_id, Event.rssi.isnot(None))
+                .order_by(Event.timestamp.desc())
+                .first()
             )
+            rssi = latest_event.rssi if latest_event else None
+
+            probe_rows = (
+                session.query(ProbeRequest.ssid)
+                .filter(
+                    ProbeRequest.device_id == device_id,
+                    ProbeRequest.ssid.isnot(None),
+                    ProbeRequest.ssid != "",
+                )
+                .distinct()
+                .limit(10)
+                .all()
+            )
+            probe_ssids = [row[0] for row in probe_rows]
+            border_ssids = [
+                s for s in probe_ssids
+                if s.lower().startswith(_BORDER_PREFIXES)
+            ]
+
+            first_seen = device.first_seen
+            new_device_details = {
+                **base,
+                "reason": f"First-time device {mac}",
+                "rssi": rssi,
+                "is_night": _is_night(current_hour),
+                "probe_ssids": probe_ssids[:3],
+                "border_ssids": border_ssids[:3],
+                "first_seen": first_seen.strftime("%Y-%m-%d %H:%M UTC") if first_seen else None,
+            }
+            return (ThreatLevel.GREEN, "new_device", new_device_details)
 
         # 8. Known device
         if is_known:

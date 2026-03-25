@@ -237,6 +237,52 @@
   <div class="empty-state">No activity detected between 00:00–05:00 in the last 24 hours</div>
   {% endif %}
 </div>
+<!-- 5. Activity heatmap -->
+<div class="card mt-1">
+  <div class="card-header">ACTIVITY HEATMAP &mdash; 24H PATTERN (last 7 days)</div>
+  <div style="padding: 1rem 0.5rem; overflow-x: auto;">
+    <div style="display: inline-grid; grid-template-columns: 80px repeat(24, 1fr); gap: 2px; min-width: 640px; width: 100%;">
+
+      {# Header row: hour labels #}
+      <div style="font-size:0.6rem; color: var(--text-muted);"></div>
+      {% for h in range(24) %}
+      <div style="font-size:0.6rem; color: var(--text-muted); text-align:center; padding-bottom:4px;">{{ '%02d'|format(h) }}</div>
+      {% endfor %}
+
+      {# Data rows #}
+      {% for cat in ['resident', 'neighbor', 'unknown'] %}
+      <div style="font-size:0.7rem; color: var(--text-dim); display:flex; align-items:center; padding-right:8px; text-transform:uppercase; letter-spacing:0.05em;">{{ cat }}</div>
+      {% for h in range(24) %}
+      {% set count = heatmap_data[cat][h] %}
+      {% if count > 0 %}
+        {% set alpha = (count / heatmap_max * 0.82 + 0.12) | round(3) %}
+      {% else %}
+        {% set alpha = 0 %}
+      {% endif %}
+      <div title="{{ cat }} {{ '%02d'|format(h) }}:00 — {{ count }} visit{{ 's' if count != 1 else '' }}"
+           style="height:28px; border-radius:3px; background-color: {% if count == 0 %}#1a1f27{% else %}rgba(63,185,80,{{ alpha }}){% endif %}; cursor:default; display:flex; align-items:center; justify-content:center;">
+        {% if count > 0 %}
+        <span style="font-size:0.58rem; color:{% if alpha > 0.6 %}#0d1117{% else %}rgba(63,185,80,0.9){% endif %}; font-weight:600; line-height:1;">{{ count }}</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+      {% endfor %}
+
+    </div>
+
+    {# Legend #}
+    <div style="display:flex; align-items:center; gap:8px; margin-top:10px; padding-left:82px;">
+      <span style="font-size:0.65rem; color:var(--text-muted);">visits:</span>
+      <div style="width:18px;height:12px;border-radius:2px;background:#1a1f27;border:1px solid #2a2f37;"></div>
+      <span style="font-size:0.65rem; color:var(--text-muted);">0</span>
+      {% for step in [(1,'rgba(63,185,80,0.22)'), (3,'rgba(63,185,80,0.44)'), (6,'rgba(63,185,80,0.65)'), (10,'rgba(63,185,80,0.85)')] %}
+      <div style="width:18px;height:12px;border-radius:2px;background:{{ step[1] }};"></div>
+      <span style="font-size:0.65rem; color:var(--text-muted);">{{ step[0] }}+</span>
+      {% endfor %}
+      <span style="font-size:0.65rem; color:var(--text-muted); margin-left:8px;">(hover for count &middot; UTC&#x2212;6)</span>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}

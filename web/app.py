@@ -659,6 +659,30 @@ def create_app() -> tuple[Flask, SocketIO]:
 
             night_events.sort(key=lambda x: x[0].timestamp, reverse=True)
 
+            # 5. Activity heatmap: visits by hour of day (UTC-6) and category, last 7 days
+            _MTN = timedelta(hours=-6)
+            _heatmap_cats = ["resident", "neighbor", "unknown"]
+            heatmap_data = {cat: [0] * 24 for cat in _heatmap_cats}
+
+            visit_rows = (
+                session.query(Visit.arrived_at, Tag.category)
+                .outerjoin(Device, Visit.device_id == Device.id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter(Visit.arrived_at >= cutoff_7d)
+                .all()
+            )
+            for arrived_at, category in visit_rows:
+                if arrived_at is None:
+                    continue
+                local_dt = arrived_at.replace(tzinfo=timezone.utc) + _MTN
+                hour = local_dt.hour
+                cat = category if category in _heatmap_cats else "unknown"
+                heatmap_data[cat][hour] += 1
+
+            heatmap_max = max(
+                (c for row in heatmap_data.values() for c in row), default=1
+            ) or 1
+
             return render_template(
                 "intelligence.html",
                 high_threat=high_threat,
@@ -666,6 +690,8 @@ def create_app() -> tuple[Flask, SocketIO]:
                 tpms_counts=tpms_counts,
                 tpms_tags=tpms_tags,
                 night_events=night_events,
+                heatmap_data=heatmap_data,
+                heatmap_max=heatmap_max,
                 generated_at=now,
             )
         finally:

@@ -136,11 +136,81 @@ _TYPE_ICON = {
 }
 
 
+def _rssi_proximity(rssi) -> str:
+    """Translate RSSI dBm to a proximity label."""
+    if rssi is None:
+        return "UNKNOWN"
+    if rssi >= -50:
+        return "VERY CLOSE (<5m)"
+    if rssi >= -70:
+        return "CLOSE (5-20m)"
+    if rssi >= -85:
+        return "NEARBY (20-50m)"
+    return "DISTANT (>50m)"
+
+
+def _rssi_icon(rssi) -> str:
+    if rssi is None:
+        return "\U0001f4e1"   # satellite
+    if rssi >= -50:
+        return "\U0001f6a8"   # rotating light
+    if rssi >= -70:
+        return "\U0001f4e1"   # satellite
+    return "\U0001f4f6"       # antenna bars
+
+
+def _format_new_device_alert(device, details: dict) -> str:
+    """Custom rich format for new device detections."""
+    mac = _dev(device, "mac", "??:??:??:??:??:??")
+    vendor = _dev(device, "vendor") or "UNIDENTIFIED HARDWARE"
+
+    rssi = details.get("rssi")
+    is_night = details.get("is_night", False)
+    probe_ssids = details.get("probe_ssids") or []
+    border_ssids = details.get("border_ssids") or []
+    first_seen = details.get("first_seen", "unknown")
+
+    # Line 1: header
+    lines = ["\U0001f195 <b>NEW DEVICE DETECTED</b>", ""]
+
+    # Line 2: context flags
+    flags = []
+    if is_night:
+        flags.append("\u26a0\ufe0f NIGHT APPEARANCE")
+    prox_label = _rssi_proximity(rssi)
+    prox_icon = _rssi_icon(rssi)
+    rssi_str = f"{rssi} dBm \u2192 " if rssi is not None else ""
+    flags.append(f"{prox_icon} {rssi_str}{prox_label}")
+    lines.append(" | ".join(flags))
+    lines.append("")
+
+    lines.append(f"\U0001f4cd <b>MAC:</b> <code>{mac}</code>")
+    lines.append(f"\U0001f3ed <b>Vendor:</b> {vendor}")
+
+    if probe_ssids:
+        lines.append(f"\U0001f50d <b>Probing for:</b> {', '.join(probe_ssids)}")
+    else:
+        lines.append("\U0001f50d <b>Probing for:</b> no probe history")
+
+    if border_ssids:
+        lines.append(
+            f"\U0001f32e <b>BORDER:</b> probed {', '.join(border_ssids)}"
+        )
+
+    lines.append(f"\U0001f552 <b>First seen:</b> {first_seen}")
+
+    return "\n".join(lines)
+
+
 def format_alert(level: ThreatLevel, alert_type: str, device=None,
                  tag=None, camera: str | None = None,
                  details: dict | None = None) -> str:
     """Build an HTML-formatted alert message."""
     details = details or {}
+
+    if alert_type == "new_device":
+        return _format_new_device_alert(device, details)
+
     level_dot = _LEVEL_HEADER[level]
     icon = _TYPE_ICON.get(alert_type, "\U0001f514")
 
