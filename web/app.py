@@ -183,6 +183,12 @@ def create_app() -> tuple[Flask, SocketIO]:
             .filter(Visit.departed_at.is_(None))
             .count()
         )
+        drones_detected = (
+            session.query(Device)
+            .join(Tag, Device.id == Tag.device_id)
+            .filter(Tag.category == "drone")
+            .count()
+        )
 
         return {
             "total_devices": total_devices,
@@ -192,6 +198,7 @@ def create_app() -> tuple[Flask, SocketIO]:
             "new_devices_today": new_devices_today,
             "frigate_today": frigate_today,
             "open_visits": open_visits,
+            "drones_detected": drones_detected,
             "timestamp": now.isoformat(),
         }
 
@@ -715,6 +722,15 @@ def create_app() -> tuple[Flask, SocketIO]:
                 for arr, dev, tag in arrival_rows
             ]
 
+            # 7. Drone detections: all devices tagged 'drone'
+            drone_devices = (
+                session.query(Device, Tag)
+                .join(Tag, Device.id == Tag.device_id)
+                .filter(Tag.category == "drone")
+                .order_by(Device.last_seen.desc())
+                .all()
+            )
+
             return render_template(
                 "intelligence.html",
                 high_threat=high_threat,
@@ -725,6 +741,7 @@ def create_app() -> tuple[Flask, SocketIO]:
                 heatmap_data=heatmap_data,
                 heatmap_max=heatmap_max,
                 correlated_arrivals=correlated_arrivals,
+                drone_devices=drone_devices,
                 generated_at=now,
             )
         finally:

@@ -78,7 +78,7 @@ class Tag(Base):
     device_id = Column(Integer, ForeignKey("devices.id", ondelete="CASCADE"), unique=True, nullable=False)
     category = Column(
         Enum("resident", "neighbor", "delivery", "visitor",
-             "unknown", "flagged", "ignore", name="tag_category_enum"),
+             "unknown", "flagged", "ignore", "drone", name="tag_category_enum"),
         default="unknown",
     )
     label = Column(String(255))                  # e.g. "John's iPhone", "FedEx"

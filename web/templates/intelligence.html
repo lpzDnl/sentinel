@@ -36,6 +36,11 @@
     <div class="card-value">{{ correlated_arrivals | length }}</div>
     <div class="card-footer">WiFi + TPMS within 2 min, last 24h</div>
   </div>
+  <div class="card stat-card red">
+    <div class="card-header">Drones Detected</div>
+    <div class="card-value">{{ drone_devices | length }}</div>
+    <div class="card-footer">all time, by MAC or FAA Remote ID</div>
+  </div>
 </div>
 
 <!-- 1. High-threat devices -->
@@ -108,7 +113,49 @@
   {% endif %}
 </div>
 
-<!-- 2. New unknown devices -->
+<!-- 2. Drone detections -->
+<div class="card mt-1">
+  <div class="card-header">&#x1F681; Drone Detections &mdash; all time</div>
+  {% if drone_devices %}
+  <div class="table-wrap">
+    <table id="tbl-drones">
+      <thead><tr>
+        <th>MAC</th>
+        <th>Vendor / Label</th>
+        <th>Signal (last)</th>
+        <th>First Seen</th>
+        <th>Last Seen</th>
+        <th data-nosort></th>
+      </tr></thead>
+      <tbody>
+        {% for dev, tag in drone_devices %}
+        <tr>
+          <td><span class="mac"><a href="/devices/{{ dev.id }}">{{ dev.mac }}</a></span></td>
+          <td>
+            <span class="badge badge-red">DRONE</span>
+            <span class="text-dim" style="margin-left:6px">{{ tag.label or dev.vendor or '—' }}</span>
+          </td>
+          <td data-val="{{ dev.total_sightings or 0 }}">
+            <span class="text-dim">{{ dev.total_sightings or 0 }} probes</span>
+          </td>
+          <td data-val="{{ dev.first_seen.timestamp() if dev.first_seen else 0 }}">
+            <span class="text-dim">{{ dev.first_seen | localtime }}</span>
+          </td>
+          <td data-val="{{ dev.last_seen.timestamp() if dev.last_seen else 0 }}">
+            <span class="text-dim">{{ dev.last_seen | timeago }}</span>
+          </td>
+          <td><a href="/devices/{{ dev.id }}" class="btn btn-sm">Detail</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">No drone devices detected</div>
+  {% endif %}
+</div>
+
+<!-- 3. New unknown devices -->
 <div class="card mt-1">
   <div class="card-header">New Unknown Devices &mdash; first seen in last 24h, no vendor ID</div>
   {% if new_unknown %}
@@ -376,6 +423,7 @@
 {% block scripts %}
 <script>
 initSortable('tbl-threat');
+initSortable('tbl-drones');
 initSortable('tbl-new-unknown');
 initSortable('tbl-tpms');
 initSortable('tbl-arrivals');

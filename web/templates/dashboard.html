@@ -8,7 +8,7 @@
 </div>
 
 <!-- Stat cards -->
-<div class="grid grid-6 mb-1">
+<div class="grid grid-6 mb-1" style="grid-template-columns: repeat(7, 1fr);">
   <div class="card stat-card cyan">
     <div class="card-header">Total Devices</div>
     <div class="card-value" id="stat-total-devices">{{ stats.total_devices }}</div>
@@ -38,6 +38,11 @@
     <div class="card-header">Alerts</div>
     <div class="card-value" id="stat-alerts">{{ stats.alerts_today }}</div>
     <div class="card-footer">triggered today</div>
+  </div>
+  <div class="card stat-card red">
+    <div class="card-header">Drones</div>
+    <div class="card-value" id="stat-drones">{{ stats.drones_detected }}</div>
+    <div class="card-footer">all time detected</div>
   </div>
 </div>
 

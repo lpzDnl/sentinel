@@ -485,6 +485,7 @@ socket.on('stats_update', function(d) {
   updateStat('stat-alerts', d.alerts_today);
   updateStat('stat-new', d.new_devices_today);
   updateStat('stat-frigate', d.frigate_today);
+  updateStat('stat-drones', d.drones_detected);
 });
 
 socket.on('new_event', function(d) {

@@ -35,6 +35,7 @@ from scapy.all import (
 sys.path.insert(0, "/opt/sentinel")
 
 import config
+from capture.drone_detect import is_drone, rssi_distance_estimate
 from database import (
     ArrivalEvent,
     Device,
@@ -568,11 +569,78 @@ class WiFiCaptureEngine:
                         current_visit.max_rssi = rssi
 
             session.commit()
+
+            # Drone detection: runs after the main commit so failures here
+            # never roll back probe/visit data.
+            if is_arrival or ssid:
+                try:
+                    self._check_drone(session, device, mac, ssid, rssi, is_arrival)
+                except Exception as e:
+                    logger.error("Drone check failed for %s: %s", mac, e)
+
         except Exception:
             session.rollback()
             raise
         finally:
             session.close()
+
+    def _check_drone(self, session, device, mac: str, ssid: str | None,
+                     rssi: int | None, is_arrival: bool):
+        """Detect drone via MAC OUI or FAA Remote ID SSID; tag and alert if found."""
+        from zoneinfo import ZoneInfo
+        from analysis.alerter import get_alerter
+
+        ssids = [ssid] if ssid else []
+        detected, vendor, faa_ssid = is_drone(mac, ssids)
+        if not detected:
+            return
+
+        # Only tag/alert once per device (skip if already tagged drone)
+        existing_tag = session.query(Tag).filter(Tag.device_id == device.id).first()
+        if existing_tag and existing_tag.category == "drone":
+            return
+
+        # Apply drone tag
+        if existing_tag:
+            existing_tag.category = "drone"
+            existing_tag.flagged = True
+            existing_tag.label = vendor or "Unknown Drone"
+            existing_tag.tagged_by = "auto"
+        else:
+            tag = Tag(
+                device_id=device.id,
+                category="drone",
+                flagged=True,
+                label=vendor or "Unknown Drone",
+                tagged_by="auto",
+            )
+            session.add(tag)
+        session.commit()
+
+        # Build and send Telegram alert
+        tz_name = config.get().get("general", {}).get("timezone", "UTC")
+        try:
+            now_local = datetime.now(ZoneInfo(tz_name))
+        except Exception:
+            now_local = datetime.now()
+        time_str = now_local.strftime("%H:%M")
+        dist_str = rssi_distance_estimate(rssi)
+        rssi_str = f"{rssi} dBm" if rssi is not None else "unknown"
+
+        lines = [
+            "\U0001f681 <b>DRONE DETECTED</b>",
+            "",
+            f"\U0001f3ed <b>Vendor:</b> {vendor or 'Unknown'}",
+            f"\U0001f4cd <b>MAC:</b> <code>{mac}</code>",
+            f"\U0001f4e1 <b>Signal strength:</b> {rssi_str} \u2014 {dist_str}",
+            f"\U0001f552 <b>Time:</b> {time_str}",
+        ]
+        if faa_ssid:
+            lines.append(f"\u26a0\ufe0f <b>FAA Remote ID:</b> {faa_ssid}")
+
+        msg = "\n".join(lines)
+        logger.warning("DRONE DETECTED  %s vendor=%s faa=%s rssi=%s", mac, vendor, faa_ssid, rssi)
+        get_alerter().send_raw_message(msg, alert_type="drone_detected", device=device)
 
     def _correlate_tpms(self, session, device, wifi_rssi):
         """Check for a recent TPMS signal and create an ArrivalEvent if found.
