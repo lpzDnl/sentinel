@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+{% block title %} — DroneID{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<style>
+#drone-map {
+  height: 420px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: #0d1117;
+}
+/* Override Leaflet popup defaults to match theme */
+.leaflet-popup-content-wrapper {
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  box-shadow: none;
+}
+.leaflet-popup-tip { background: var(--bg-card); }
+.leaflet-popup-content { margin: 10px 14px; }
+
+.drone-serial { color: var(--amber); font-weight: 600; }
+.coord-link   { color: var(--blue); text-decoration: none; }
+.coord-link:hover { text-decoration: underline; }
+
+.rssi-strong { color: var(--green); }
+.rssi-medium { color: var(--yellow); }
+.rssi-weak   { color: var(--red); }
+
+.gps-dot {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; margin-right: 4px; vertical-align: middle;
+}
+.gps-yes { background: var(--green); }
+.gps-no  { background: var(--text-muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>DRONE REMOTE ID</h1>
+  <span class="subtitle">OpenDroneID beacon detections (ASTM F3411)</span>
+</div>
+
+{# Stat cards #}
+<div class="grid grid-4 mb-1">
+  <div class="card stat-card amber">
+    <div class="card-header">Total Detections</div>
+    <div class="card-value">{{ total }}</div>
+  </div>
+  <div class="card stat-card blue">
+    <div class="card-header">Unique Drones</div>
+    <div class="card-value">{{ unique_macs }}</div>
+  </div>
+  <div class="card stat-card green">
+    <div class="card-header">With GPS Fix</div>
+    <div class="card-value">{{ gps_count }}</div>
+  </div>
+  <div class="card stat-card purple">
+    <div class="card-header">Pilot GPS Known</div>
+    <div class="card-value">{{ pilot_count }}</div>
+  </div>
+</div>
+
+{# Leaflet Map #}
+<div class="card mb-1">
+  <div class="card-header">
+    Detection Map
+    <span class="text-dim" style="font-weight:400;font-size:0.68rem;margin-left:0.5rem">
+      most recent GPS fix per drone &mdash; orange = drone, blue = pilot
+    </span>
+  </div>
+  {% if map_markers %}
+  <div id="drone-map"></div>
+  {% else %}
+  <div style="padding:2rem;text-align:center;color:var(--text-muted)">
+    No GPS fixes recorded yet &mdash; ensure sentinel-droneid is running
+    and drones are broadcasting with valid location messages.
+  </div>
+  {% endif %}
+</div>
+
+{# Detections table #}
+<div class="card">
+  <div class="card-header">Detection Log</div>
+  <div class="table-wrap">
+    <table id="tbl-droneid">
+      <thead><tr>
+        <th>Timestamp</th>
+        <th>MAC</th>
+        <th>Serial</th>
+        <th>Drone Position</th>
+        <th>Alt (m)</th>
+        <th>Pilot Position</th>
+        <th>Speed</th>
+        <th>Heading</th>
+        <th>RSSI</th>
+      </tr></thead>
+      <tbody>
+        {% for evt in events %}
+        <tr>
+          <td data-val="{{ evt.timestamp.timestamp() if evt.timestamp else 0 }}"
+              style="white-space:nowrap">
+            <span class="text-dim">{{ evt.timestamp | localtime }}</span>
+          </td>
+          <td><code class="text-amber" style="font-size:0.75rem">{{ evt.mac }}</code></td>
+          <td>
+            {% if evt.serial_number %}
+            <span class="drone-serial">{{ evt.serial_number }}</span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if evt.drone_lat is not none %}
+            <span class="gps-dot gps-yes"></span>
+            <a class="coord-link"
+               href="https://maps.google.com/?q={{ '%.6f'|format(evt.drone_lat) }},{{ '%.6f'|format(evt.drone_lon) }}"
+               target="_blank" rel="noopener">
+              {{ "%.5f"|format(evt.drone_lat) }}, {{ "%.5f"|format(evt.drone_lon) }}
+            </a>
+            {% else %}
+            <span class="gps-dot gps-no"></span><span class="text-muted">no fix</span>
+            {% endif %}
+          </td>
+          <td data-val="{{ evt.drone_alt_meters if evt.drone_alt_meters is not none else -9999 }}">
+            {% if evt.drone_alt_meters is not none %}
+            <span class="text-dim">{{ "%.0f"|format(evt.drone_alt_meters) }}</span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if evt.pilot_lat is not none %}
+            <span class="gps-dot gps-yes"></span>
+            <a class="coord-link"
+               href="https://maps.google.com/?q={{ '%.6f'|format(evt.pilot_lat) }},{{ '%.6f'|format(evt.pilot_lon) }}"
+               target="_blank" rel="noopener">
+              {{ "%.5f"|format(evt.pilot_lat) }}, {{ "%.5f"|format(evt.pilot_lon) }}
+            </a>
+            {% else %}
+            <span class="gps-dot gps-no"></span><span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td data-val="{{ evt.speed_ms if evt.speed_ms is not none else -1 }}">
+            {% if evt.speed_ms is not none %}
+            <span class="text-dim">{{ "%.1f"|format(evt.speed_ms) }} m/s</span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td data-val="{{ evt.heading if evt.heading is not none else -1 }}">
+            {% if evt.heading is not none %}
+            <span class="text-dim">{{ "%.0f"|format(evt.heading) }}&deg;</span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td data-val="{{ evt.rssi if evt.rssi is not none else -999 }}">
+            {% if evt.rssi is not none %}
+              {% if evt.rssi >= -60 %}<span class="rssi-strong">{{ evt.rssi }} dBm</span>
+              {% elif evt.rssi >= -80 %}<span class="rssi-medium">{{ evt.rssi }} dBm</span>
+              {% else %}<span class="rssi-weak">{{ evt.rssi }} dBm</span>{% endif %}
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not events %}
+        <tr><td colspan="9" class="empty-state">
+          No DroneID events recorded yet &mdash; start sentinel-droneid and wait for a drone to broadcast Remote ID
+        </td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if total > per_page %}
+<div class="pagination">
+  {% if page > 1 %}<a href="?page={{ page-1 }}">&laquo; Prev</a>{% endif %}
+  <span class="current">Page {{ page }} of {{ ((total - 1) // per_page) + 1 }}</span>
+  {% if page * per_page < total %}<a href="?page={{ page+1 }}">Next &raquo;</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WPnI=" crossorigin=""></script>
+<script>
+initSortable('tbl-droneid');
+
+{% if map_markers %}
+// Initialize Leaflet map with dark CartoDB tiles
+var map = L.map('drone-map', { zoomControl: true, scrollWheelZoom: true });
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  subdomains: 'abcd',
+  maxZoom: 20
+}).addTo(map);
+
+var markers = {{ map_markers | tojson_safe }};
+
+// Custom drone icon (orange dot)
+var droneIcon = L.divIcon({
+  className: '',
+  html: '<div style="width:14px;height:14px;border-radius:50%;background:#e6a817;border:2px solid #fff;box-shadow:0 0 6px rgba(230,168,23,0.8)"></div>',
+  iconSize: [14, 14],
+  iconAnchor: [7, 7],
+  popupAnchor: [0, -10],
+});
+
+// Custom pilot icon (blue dot)
+var pilotIcon = L.divIcon({
+  className: '',
+  html: '<div style="width:12px;height:12px;border-radius:50%;background:#58a6ff;border:2px solid #fff;box-shadow:0 0 6px rgba(88,166,255,0.8)"></div>',
+  iconSize: [12, 12],
+  iconAnchor: [6, 6],
+  popupAnchor: [0, -8],
+});
+
+var bounds = [];
+
+markers.forEach(function(m) {
+  var dLat = m.drone_lat, dLon = m.drone_lon;
+  var pLat = m.pilot_lat, pLon = m.pilot_lon;
+
+  // Drone marker
+  var dronePopup = '<b class="drone-serial">' + m.serial + '</b><br>'
+    + '<span style="color:var(--text-muted)">MAC:</span> ' + m.mac + '<br>'
+    + (m.drone_alt !== null && m.drone_alt !== undefined
+        ? '<span style="color:var(--text-muted)">Alt:</span> ' + Math.round(m.drone_alt) + ' m<br>' : '')
+    + (m.speed_ms !== null && m.speed_ms !== undefined
+        ? '<span style="color:var(--text-muted)">Speed:</span> ' + m.speed_ms.toFixed(1) + ' m/s &nbsp; '
+          + '<span style="color:var(--text-muted)">Hdg:</span> ' + (m.heading !== null ? Math.round(m.heading) + '&deg;' : '—') + '<br>' : '')
+    + (m.rssi !== null && m.rssi !== undefined
+        ? '<span style="color:var(--text-muted)">RSSI:</span> ' + m.rssi + ' dBm<br>' : '');
+
+  var dMarker = L.marker([dLat, dLon], { icon: droneIcon })
+    .bindPopup(dronePopup)
+    .addTo(map);
+  bounds.push([dLat, dLon]);
+
+  // Pilot marker + line connecting drone to pilot
+  if (pLat !== null && pLon !== null) {
+    var pilotPopup = '<b style="color:#58a6ff">Pilot/Operator</b><br>'
+      + '<span style="color:var(--text-muted)">Drone serial:</span> ' + m.serial + '<br>'
+      + '<span style="color:var(--text-muted)">Coords:</span> ' + pLat.toFixed(5) + ', ' + pLon.toFixed(5);
+
+    L.marker([pLat, pLon], { icon: pilotIcon })
+      .bindPopup(pilotPopup)
+      .addTo(map);
+
+    L.polyline([[dLat, dLon], [pLat, pLon]], {
+      color: '#58a6ff',
+      weight: 1.5,
+      opacity: 0.5,
+      dashArray: '4 4',
+    }).addTo(map);
+
+    bounds.push([pLat, pLon]);
+  }
+});
+
+if (bounds.length > 0) {
+  map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+} else {
+  map.setView([0, 0], 2);
+}
+{% endif %}
+</script>
+{% endblock %}

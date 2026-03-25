@@ -35,6 +35,7 @@ from database import (
     Baseline,
     Device,
     DeviceHeartbeat,
+    DroneIdEvent,
     Event,
     FrigateEvent,
     ProbeRequest,
@@ -917,6 +918,92 @@ def create_app() -> tuple[Flask, SocketIO]:
                 total_border=total_border,
                 unique_carriers=sorted(mx_carriers),
                 top_mx_ssid=top_mx_ssid,
+            )
+        finally:
+            session.close()
+
+    @app.route("/droneid")
+    def droneid():
+        session = get_session()
+        try:
+            from sqlalchemy import func
+
+            page = max(1, request.args.get("page", 1, type=int))
+            per_page = 50
+
+            total = session.query(func.count(DroneIdEvent.id)).scalar() or 0
+            events = (
+                session.query(DroneIdEvent)
+                .order_by(DroneIdEvent.timestamp.desc())
+                .offset((page - 1) * per_page)
+                .limit(per_page)
+                .all()
+            )
+
+            # Unique drones seen
+            unique_macs = (
+                session.query(DroneIdEvent.mac)
+                .distinct()
+                .count()
+            )
+
+            # Events with GPS fix
+            gps_count = (
+                session.query(func.count(DroneIdEvent.id))
+                .filter(DroneIdEvent.drone_lat.isnot(None))
+                .scalar()
+            ) or 0
+
+            # Events with pilot GPS
+            pilot_count = (
+                session.query(func.count(DroneIdEvent.id))
+                .filter(DroneIdEvent.pilot_lat.isnot(None))
+                .scalar()
+            ) or 0
+
+            # Most recent event per unique MAC for map display
+            subq = (
+                session.query(
+                    DroneIdEvent.mac,
+                    func.max(DroneIdEvent.id).label("max_id"),
+                )
+                .group_by(DroneIdEvent.mac)
+                .subquery()
+            )
+            latest_events = (
+                session.query(DroneIdEvent)
+                .join(subq, DroneIdEvent.id == subq.c.max_id)
+                .filter(DroneIdEvent.drone_lat.isnot(None))
+                .all()
+            )
+
+            map_markers = []
+            for e in latest_events:
+                marker = {
+                    "mac": e.mac,
+                    "serial": e.serial_number or "UNKNOWN",
+                    "drone_lat": e.drone_lat,
+                    "drone_lon": e.drone_lon,
+                    "drone_alt": e.drone_alt_meters,
+                    "pilot_lat": e.pilot_lat,
+                    "pilot_lon": e.pilot_lon,
+                    "speed_ms": e.speed_ms,
+                    "heading": e.heading,
+                    "rssi": e.rssi,
+                    "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                }
+                map_markers.append(marker)
+
+            return render_template(
+                "droneid.html",
+                events=events,
+                total=total,
+                unique_macs=unique_macs,
+                gps_count=gps_count,
+                pilot_count=pilot_count,
+                map_markers=map_markers,
+                page=page,
+                per_page=per_page,
             )
         finally:
             session.close()

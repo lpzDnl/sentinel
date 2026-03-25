@@ -402,6 +402,32 @@ class AlertLog(Base):
         return f"<Alert {self.alert_type} delivered={self.delivered}>"
 
 
+class DroneIdEvent(Base):
+    """OpenDroneID beacon event decoded from a WiFi beacon frame."""
+    __tablename__ = "droneid_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    mac = Column(String(17), nullable=False, index=True)
+    serial_number = Column(String(64))          # from Basic ID message
+    drone_lat = Column(Float)                   # degrees
+    drone_lon = Column(Float)                   # degrees
+    drone_alt_meters = Column(Float)            # geodetic altitude, metres
+    pilot_lat = Column(Float)                   # operator GPS from System message
+    pilot_lon = Column(Float)
+    speed_ms = Column(Float)                    # horizontal speed m/s
+    heading = Column(Float)                     # track direction degrees (0=N)
+    rssi = Column(Integer)                      # beacon RSSI dBm
+    raw_data = Column(Text)                     # JSON of raw parsed message parts
+
+    __table_args__ = (
+        Index("ix_droneid_mac_ts", "mac", "timestamp"),
+    )
+
+    def __repr__(self):
+        return f"<DroneIdEvent mac={self.mac} serial={self.serial_number}>"
+
+
 # ---------------------------------------------------------------------------
 # Engine & Session Management
 # ---------------------------------------------------------------------------

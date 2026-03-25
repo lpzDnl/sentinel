@@ -1,0 +1,36 @@
+[Unit]
+Description=SENTINEL OpenDroneID Beacon Capture
+Documentation=file:///opt/sentinel/README.md
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m capture.droneid_capture
+WorkingDirectory=/opt/sentinel
+Restart=on-failure
+RestartSec=10
+
+# Needs root for raw 802.11 socket access on wlan1mon
+User=root
+Group=root
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sentinel-droneid
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/opt/sentinel/data /opt/sentinel/logs
+ProtectHome=yes
+NoNewPrivileges=no
+PrivateTmp=yes
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/sentinel
+
+[Install]
+WantedBy=multi-user.target
