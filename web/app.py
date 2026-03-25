@@ -31,6 +31,7 @@ sys.path.insert(0, "/opt/sentinel")
 import config
 from database import (
     AlertLog,
+    ArrivalEvent,
     Baseline,
     Device,
     DeviceHeartbeat,
@@ -699,6 +700,21 @@ def create_app() -> tuple[Flask, SocketIO]:
                 (c for row in heatmap_data.values() for c in row), default=1
             ) or 1
 
+            # 6. Correlated arrivals: WiFi + TPMS within 2 minutes, last 24h
+            arrival_rows = (
+                session.query(ArrivalEvent, Device, Tag)
+                .outerjoin(Device, ArrivalEvent.wifi_device_id == Device.id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter(ArrivalEvent.timestamp >= cutoff_24h)
+                .order_by(ArrivalEvent.timestamp.desc())
+                .limit(50)
+                .all()
+            )
+            correlated_arrivals = [
+                {"arrival": arr, "device": dev, "tag": tag}
+                for arr, dev, tag in arrival_rows
+            ]
+
             return render_template(
                 "intelligence.html",
                 high_threat=high_threat,
@@ -708,6 +724,7 @@ def create_app() -> tuple[Flask, SocketIO]:
                 night_events=night_events,
                 heatmap_data=heatmap_data,
                 heatmap_max=heatmap_max,
+                correlated_arrivals=correlated_arrivals,
                 generated_at=now,
             )
         finally:
@@ -1242,6 +1259,58 @@ def create_app() -> tuple[Flask, SocketIO]:
                 }
                 for hb, dev, tag in rows
             ])
+        finally:
+            session.close()
+
+    @app.route("/api/arrivals")
+    def api_arrivals():
+        """Return recent correlated arrival events (WiFi + TPMS within 2 minutes)."""
+        session = get_session()
+        try:
+            limit = min(int(request.args.get("limit", 100)), 500)
+            rows = (
+                session.query(ArrivalEvent, Device, Tag)
+                .outerjoin(Device, ArrivalEvent.wifi_device_id == Device.id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .order_by(ArrivalEvent.timestamp.desc())
+                .limit(limit)
+                .all()
+            )
+            result = []
+            for arr, dev, tag in rows:
+                tpms_rssi = arr.tpms_rssi
+                if tpms_rssi is not None and tpms_rssi > -60:
+                    distance = "very close (<5m)"
+                elif tpms_rssi is not None and tpms_rssi > -70:
+                    distance = "close (<10m)"
+                elif tpms_rssi is not None and tpms_rssi > -80:
+                    distance = "medium (10–30m)"
+                else:
+                    distance = "far (>30m)"
+                result.append({
+                    "id": arr.id,
+                    "timestamp": arr.timestamp.isoformat() if arr.timestamp else None,
+                    "confidence": arr.confidence,
+                    "tpms_sensor_id": arr.tpms_sensor_id,
+                    "tpms_model": arr.tpms_model,
+                    "tpms_rssi": tpms_rssi,
+                    "distance_estimate": distance,
+                    "notes": arr.notes,
+                    "reviewed": arr.reviewed,
+                    "wifi_device": {
+                        "id": dev.id,
+                        "mac": dev.mac,
+                        "vendor": dev.vendor,
+                        "alias": dev.alias,
+                        "is_randomized": dev.is_randomized,
+                    } if dev else None,
+                    "tag": {
+                        "category": tag.category,
+                        "label": tag.label,
+                        "flagged": tag.flagged,
+                    } if tag else None,
+                })
+            return jsonify(result)
         finally:
             session.close()
 

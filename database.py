@@ -357,6 +357,33 @@ class DeviceHeartbeat(Base):
         return f"<DeviceHeartbeat device={self.device_id} status={self.status}>"
 
 
+class ArrivalEvent(Base):
+    """Correlated arrival: WiFi device and TPMS signal seen within 2 minutes."""
+    __tablename__ = "arrival_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    wifi_device_id = Column(Integer, ForeignKey("devices.id", ondelete="SET NULL"), index=True)
+    tpms_sensor_id = Column(String(128), index=True)   # SdrSignal.device_uid
+    tpms_model = Column(String(128))
+    tpms_rssi = Column(Float)
+    confidence = Column(
+        Enum("high", "medium", "low", name="arrival_confidence_enum"),
+        default="medium",
+    )
+    notes = Column(Text)
+    reviewed = Column(Boolean, default=False)
+
+    wifi_device = relationship("Device")
+
+    __table_args__ = (
+        Index("ix_arrival_time", "timestamp"),
+    )
+
+    def __repr__(self):
+        return f"<ArrivalEvent wifi={self.wifi_device_id} tpms={self.tpms_sensor_id} conf={self.confidence}>"
+
+
 class AlertLog(Base):
     """Record of all alerts sent."""
     __tablename__ = "alert_log"

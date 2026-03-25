@@ -30,6 +30,13 @@
     <div class="card-footer">activity 00:00–05:00 local in last 24h</div>
   </div>
 </div>
+<div class="grid grid-4 mb-1">
+  <div class="card stat-card green">
+    <div class="card-header">Correlated Arrivals</div>
+    <div class="card-value">{{ correlated_arrivals | length }}</div>
+    <div class="card-footer">WiFi + TPMS within 2 min, last 24h</div>
+  </div>
+</div>
 
 <!-- 1. High-threat devices -->
 <div class="card mt-1">
@@ -205,7 +212,88 @@
   {% endif %}
 </div>
 
-<!-- 4. Night activity -->
+<!-- 4. Correlated arrivals -->
+<div class="card mt-1">
+  <div class="card-header">CORRELATED ARRIVALS &mdash; WiFi device + TPMS signal within 2 minutes, last 24h</div>
+  {% if correlated_arrivals %}
+  <div class="table-wrap">
+    <table id="tbl-arrivals">
+      <thead><tr>
+        <th>Timestamp</th>
+        <th>WiFi Device</th>
+        <th>Vendor</th>
+        <th>Tag</th>
+        <th>Vehicle (TPMS)</th>
+        <th>RSSI</th>
+        <th>Distance Est.</th>
+        <th>Confidence</th>
+      </tr></thead>
+      <tbody>
+        {% for row in correlated_arrivals %}
+        {% set arr = row.arrival %}
+        {% set dev = row.device %}
+        {% set tag = row.tag %}
+        {% set rssi = arr.tpms_rssi %}
+        {% if rssi is not none and rssi > -60 %}
+          {% set dist = "very close (<5m)" %}
+        {% elif rssi is not none and rssi > -70 %}
+          {% set dist = "close (<10m)" %}
+        {% elif rssi is not none and rssi > -80 %}
+          {% set dist = "medium (10–30m)" %}
+        {% else %}
+          {% set dist = "far (>30m)" %}
+        {% endif %}
+        <tr>
+          <td data-val="{{ arr.timestamp.timestamp() if arr.timestamp else 0 }}">
+            <span class="text-dim">{{ arr.timestamp | localtime }}</span>
+          </td>
+          <td>
+            {% if dev %}
+            <span class="mac"><a href="/devices/{{ dev.id }}">{{ dev.alias or dev.mac }}</a></span>
+            {% if dev.is_randomized %}&nbsp;<span class="badge badge-yellow" style="font-size:0.6rem">RAND</span>{% endif %}
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td><span class="text-dim">{{ dev.vendor if dev and dev.vendor else '—' }}</span></td>
+          <td>
+            {% if tag %}
+            <span class="badge badge-tag tag-{{ tag.category }}">{{ tag.category }}{% if tag.label %} &middot; {{ tag.label }}{% endif %}</span>
+            {% if tag.flagged %}&nbsp;<span class="badge badge-red">FLAGGED</span>{% endif %}
+            {% else %}
+            <span class="badge badge-dim">unknown</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="text-dim">{{ arr.tpms_model or arr.tpms_sensor_id or '—' }}</span>
+            {% if arr.tpms_model and arr.tpms_sensor_id %}
+            <br><span class="text-muted" style="font-size:0.7rem">{{ arr.tpms_sensor_id }}</span>
+            {% endif %}
+          </td>
+          <td data-val="{{ rssi or -999 }}">
+            <span class="text-dim">{{ '%.1f' | format(rssi) if rssi is not none else '—' }} dBm</span>
+          </td>
+          <td><span class="text-muted" style="font-size:0.78rem">{{ dist }}</span></td>
+          <td>
+            {% if arr.confidence == 'high' %}
+            <span class="badge badge-green">HIGH</span>
+            {% elif arr.confidence == 'medium' %}
+            <span class="badge badge-yellow">MED</span>
+            {% else %}
+            <span class="badge badge-dim">LOW</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">No correlated WiFi + TPMS arrivals in the last 24 hours</div>
+  {% endif %}
+</div>
+
+<!-- 6. Night activity -->
 <div class="card mt-1">
   <div class="card-header">Night Activity &mdash; 00:00–05:00 local time in last 24h</div>
   {% if night_events %}
@@ -290,5 +378,6 @@
 initSortable('tbl-threat');
 initSortable('tbl-new-unknown');
 initSortable('tbl-tpms');
+initSortable('tbl-arrivals');
 </script>
 {% endblock %}

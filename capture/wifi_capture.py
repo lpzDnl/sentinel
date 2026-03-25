@@ -36,10 +36,12 @@ sys.path.insert(0, "/opt/sentinel")
 
 import config
 from database import (
+    ArrivalEvent,
     Device,
     DeviceHeartbeat,
     Event,
     ProbeRequest,
+    SdrSignal,
     Tag,
     Visit,
     get_or_create_device,
@@ -549,6 +551,9 @@ class WiFiCaptureEngine:
                     rssi=rssi,
                 )
                 session.add(arrival_event)
+
+                # Cross-sensor correlation: look for a recent TPMS signal
+                self._correlate_tpms(session, device, rssi)
             else:
                 # Update current visit event count and max RSSI
                 current_visit = (
@@ -568,6 +573,51 @@ class WiFiCaptureEngine:
             raise
         finally:
             session.close()
+
+    def _correlate_tpms(self, session, device, wifi_rssi):
+        """Check for a recent TPMS signal and create an ArrivalEvent if found.
+
+        Queries sdr_signals for any TPMS signal in the last 2 minutes.
+        Picks the most recent hit. Confidence is 'high' if TPMS RSSI > -70,
+        'medium' otherwise. Writes an ArrivalEvent row (within the same session).
+        """
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+        tpms_hit = (
+            session.query(SdrSignal)
+            .filter(
+                SdrSignal.signal_class == "tpms",
+                SdrSignal.timestamp >= cutoff,
+            )
+            .order_by(SdrSignal.timestamp.desc())
+            .first()
+        )
+        if tpms_hit is None:
+            return
+
+        confidence = "high" if (tpms_hit.rssi is not None and tpms_hit.rssi > -70) else "medium"
+        notes = (
+            f"WiFi rssi={wifi_rssi} dBm; "
+            f"TPMS rssi={tpms_hit.rssi} dBm; "
+            f"correlation window=2m"
+        )
+        arrival = ArrivalEvent(
+            wifi_device_id=device.id,
+            tpms_sensor_id=tpms_hit.device_uid,
+            tpms_model=tpms_hit.model,
+            tpms_rssi=tpms_hit.rssi,
+            confidence=confidence,
+            notes=notes,
+        )
+        session.add(arrival)
+        logger.info(
+            "CORRELATED ARRIVAL  wifi=%s tpms=%s model=%s rssi=%.1f conf=%s",
+            device.mac,
+            tpms_hit.device_uid,
+            tpms_hit.model or "?",
+            tpms_hit.rssi or 0,
+            confidence,
+        )
 
     def _departure_loop(self):
         """Periodically check for departed devices."""
