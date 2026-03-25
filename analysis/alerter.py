@@ -442,6 +442,38 @@ class ThreatAlerter:
         finally:
             session.close()
 
+    def send_raw_message(self, text: str, alert_type: str = "heartbeat",
+                         device=None) -> bool:
+        """Send a pre-formatted message directly to Telegram, bypassing threat routing.
+
+        Logs to alert_log with level=red. Use for operational alerts (heartbeat,
+        recovery) that have a fixed format not suited to format_alert().
+        """
+        mac = _dev(device, "mac", "unknown")
+        if self.tg_enabled:
+            if not self.rate_limiter.acquire():
+                logger.warning("send_raw_message rate-limited: %s %s", alert_type, mac)
+                self._log_alert(ThreatLevel.RED, alert_type, device, text,
+                                channel="telegram", delivered=False, error="rate_limited")
+                return False
+            try:
+                sent = self._send_message(text)
+            except Exception as e:
+                logger.error("send_raw_message Telegram error: %s", e)
+                self._log_alert(ThreatLevel.RED, alert_type, device, text,
+                                channel="telegram", delivered=False, error=str(e))
+                return False
+            self._log_alert(ThreatLevel.RED, alert_type, device, text,
+                            channel="telegram", delivered=sent)
+            if sent:
+                logger.info("Raw message sent via Telegram: %s for %s", alert_type, mac)
+            return sent
+        else:
+            logger.info("[telegram disabled] %s: %s", alert_type, mac)
+            self._log_alert(ThreatLevel.RED, alert_type, device, text,
+                            channel="telegram", delivered=False, error="telegram_disabled")
+            return False
+
     def test_connection(self) -> bool:
         """Send a test message to verify Telegram configuration."""
         if not self.tg_enabled:

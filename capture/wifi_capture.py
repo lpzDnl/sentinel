@@ -37,8 +37,10 @@ sys.path.insert(0, "/opt/sentinel")
 import config
 from database import (
     Device,
+    DeviceHeartbeat,
     Event,
     ProbeRequest,
+    Tag,
     Visit,
     get_or_create_device,
     get_session,
@@ -166,6 +168,168 @@ class DeviceTracker:
 
 
 # ---------------------------------------------------------------------------
+# Resident heartbeat monitor
+# ---------------------------------------------------------------------------
+
+class ResidentHeartbeatMonitor:
+    """Monitors resident-tagged devices for presence heartbeats.
+
+    Runs every 15 minutes. For each device tagged 'resident', checks
+    last_seen against the expected interval. If missing for 2× the
+    expected interval, marks offline and fires a Telegram alert.
+    Sends a recovery alert when the device comes back online.
+    """
+
+    CHECK_INTERVAL = 15 * 60          # 15 minutes
+    DEFAULT_INTERVAL_MINUTES = 60     # expected WiFi heartbeat window
+    MISS_MULTIPLIER = 2               # 2× expected = offline threshold
+
+    def __init__(self):
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        self._thread = threading.Thread(
+            target=self._monitor_loop, daemon=True, name="heartbeat-monitor"
+        )
+        self._thread.start()
+        logger.info("Resident heartbeat monitor started (check every 15m)")
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+        logger.info("Resident heartbeat monitor stopped")
+
+    def _monitor_loop(self):
+        # Small startup delay so wifi capture is fully running first
+        self._stop.wait(60)
+        while not self._stop.is_set():
+            for attempt in range(3):
+                try:
+                    self._run_check()
+                    break
+                except Exception as e:
+                    if "database is locked" in str(e).lower() and attempt < 2:
+                        logger.warning(
+                            "Heartbeat monitor: database locked, retrying in 5s (attempt %d/3)",
+                            attempt + 1,
+                        )
+                        self._stop.wait(5)
+                    else:
+                        logger.error("Heartbeat monitor check failed: %s", e)
+                        break
+            self._stop.wait(self.CHECK_INTERVAL)
+
+    def _run_check(self):
+        from analysis.alerter import get_alerter  # lazy import avoids circular deps
+
+        now = datetime.now(timezone.utc)
+        session = get_session()
+        try:
+            resident_rows = (
+                session.query(Device, Tag)
+                .join(Tag, Device.id == Tag.device_id)
+                .filter(Tag.category == "resident")
+                .all()
+            )
+
+            if not resident_rows:
+                return
+
+            alerter = get_alerter()
+
+            for device, tag in resident_rows:
+                # Get or create heartbeat record
+                hb = (
+                    session.query(DeviceHeartbeat)
+                    .filter(DeviceHeartbeat.device_id == device.id)
+                    .first()
+                )
+                if not hb:
+                    hb = DeviceHeartbeat(
+                        device_id=device.id,
+                        last_seen=device.last_seen,
+                        expected_interval_minutes=self.DEFAULT_INTERVAL_MINUTES,
+                        status="unknown",
+                        consecutive_misses=0,
+                    )
+                    session.add(hb)
+                    session.flush()
+
+                # Normalize last_seen to UTC-aware
+                device_last = device.last_seen
+                if device_last and device_last.tzinfo is None:
+                    device_last = device_last.replace(tzinfo=timezone.utc)
+
+                prev_status = hb.status
+                name = tag.label or device.alias or device.vendor or device.mac
+                threshold_minutes = hb.expected_interval_minutes * self.MISS_MULTIPLIER
+
+                if device_last:
+                    minutes_missing = (now - device_last).total_seconds() / 60
+
+                    if minutes_missing <= hb.expected_interval_minutes:
+                        # Device is online
+                        hb.last_seen = device_last
+                        hb.status = "online"
+                        hb.consecutive_misses = 0
+
+                        if prev_status == "offline":
+                            # Recovery: calculate how long it was offline
+                            offline_since = hb.alerted_at
+                            if offline_since and offline_since.tzinfo is None:
+                                offline_since = offline_since.replace(tzinfo=timezone.utc)
+                            offline_minutes = (
+                                int((now - offline_since).total_seconds() / 60)
+                                if offline_since else 0
+                            )
+                            msg = (
+                                f"\u2705 <b>RESIDENT DEVICE BACK ONLINE</b>\n\n"
+                                f"\U0001f4f1 <b>Device:</b> {name}\n"
+                                f"\u23f1\ufe0f <b>Was offline for:</b> {offline_minutes} minutes"
+                            )
+                            alerter.send_raw_message(msg, alert_type="resident_online",
+                                                     device=device)
+                            logger.info("Resident device recovered: %s (%s)", device.mac, name)
+
+                    elif minutes_missing > threshold_minutes:
+                        # Device is offline
+                        hb.status = "offline"
+                        hb.consecutive_misses += 1
+
+                        # Only alert on the transition to offline
+                        if prev_status != "offline":
+                            hb.alerted_at = now
+                            last_seen_str = (
+                                device_last.strftime("%Y-%m-%d %H:%M UTC")
+                                if device_last else "unknown"
+                            )
+                            msg = (
+                                f"\U0001f4f4 <b>RESIDENT DEVICE OFFLINE</b>\n\n"
+                                f"\U0001f4f1 <b>Device:</b> {name}\n"
+                                f"\U0001f552 <b>Last seen:</b> {last_seen_str}\n"
+                                f"\u23f1\ufe0f <b>Missing for:</b> {int(minutes_missing)} minutes"
+                            )
+                            alerter.send_raw_message(msg, alert_type="resident_offline",
+                                                     device=device)
+                            logger.warning(
+                                "Resident device offline: %s (%s) missing %dm",
+                                device.mac, name, int(minutes_missing),
+                            )
+                else:
+                    hb.status = "unknown"
+
+            session.commit()
+            logger.debug("Heartbeat check complete: %d resident devices", len(resident_rows))
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+
+# ---------------------------------------------------------------------------
 # Capture engine
 # ---------------------------------------------------------------------------
 
@@ -179,6 +343,7 @@ class WiFiCaptureEngine:
         self.tracker = DeviceTracker(timeout=self.cfg.get("device_timeout", 300))
         self._stop = threading.Event()
         self._departure_thread: threading.Thread | None = None
+        self.heartbeat_monitor = ResidentHeartbeatMonitor()
 
         # Stats
         self.stats = {
@@ -208,6 +373,9 @@ class WiFiCaptureEngine:
         )
         self._departure_thread.start()
 
+        # Start resident heartbeat monitor
+        self.heartbeat_monitor.start()
+
         # Build BPF filter for probe requests
         # type 0 subtype 4 = probe request
         bpf_filter = "type mgt subtype probe-req"
@@ -235,6 +403,7 @@ class WiFiCaptureEngine:
         self._stop.set()
         if self.hopper:
             self.hopper.stop()
+        self.heartbeat_monitor.stop()
         self._flush_departures()
         logger.info(
             "WiFi capture stopped. Stats: %d packets, %d probes, %d devices, %d new, %d departures",

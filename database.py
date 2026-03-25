@@ -63,6 +63,7 @@ class Device(Base):
     probes = relationship("ProbeRequest", back_populates="device", cascade="all, delete-orphan")
     baseline = relationship("Baseline", back_populates="device", uselist=False, cascade="all, delete-orphan")
     wigle_results = relationship("WigleCache", back_populates="device", cascade="all, delete-orphan")
+    heartbeat = relationship("DeviceHeartbeat", back_populates="device", uselist=False, cascade="all, delete-orphan")
 
     def __repr__(self):
         label = self.alias or self.vendor or self.mac
@@ -335,6 +336,27 @@ class VehicleProfile(Base):
         return f"<VehicleProfile {self.sensor_id} sightings={self.sighting_count}>"
 
 
+class DeviceHeartbeat(Base):
+    """Heartbeat monitoring record for resident-tagged devices."""
+    __tablename__ = "device_heartbeats"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(Integer, ForeignKey("devices.id", ondelete="CASCADE"), unique=True, nullable=False)
+    last_seen = Column(DateTime)
+    expected_interval_minutes = Column(Integer, default=60)
+    status = Column(
+        Enum("online", "offline", "unknown", name="heartbeat_status_enum"),
+        default="unknown",
+    )
+    consecutive_misses = Column(Integer, default=0)
+    alerted_at = Column(DateTime)
+
+    device = relationship("Device", back_populates="heartbeat")
+
+    def __repr__(self):
+        return f"<DeviceHeartbeat device={self.device_id} status={self.status}>"
+
+
 class AlertLog(Base):
     """Record of all alerts sent."""
     __tablename__ = "alert_log"
@@ -385,6 +407,7 @@ def get_engine():
             f"sqlite:///{db_path}",
             echo=False,
             pool_pre_ping=True,
+            connect_args={"timeout": 30, "check_same_thread": False},
         )
         event.listen(_engine, "connect", _set_sqlite_pragmas)
         logger.info("Database engine created: %s", db_path)

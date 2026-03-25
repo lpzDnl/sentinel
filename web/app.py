@@ -33,6 +33,7 @@ from database import (
     AlertLog,
     Baseline,
     Device,
+    DeviceHeartbeat,
     Event,
     FrigateEvent,
     ProbeRequest,
@@ -329,6 +330,20 @@ def create_app() -> tuple[Flask, SocketIO]:
                 .all()
             )
 
+            # Heartbeat status map for resident devices (device_id → status)
+            resident_ids = [
+                dev.id for dev, tag in devices_list
+                if tag and tag.category == "resident"
+            ]
+            heartbeat_map = {}
+            if resident_ids:
+                hb_rows = (
+                    session.query(DeviceHeartbeat)
+                    .filter(DeviceHeartbeat.device_id.in_(resident_ids))
+                    .all()
+                )
+                heartbeat_map = {hb.device_id: hb.status for hb in hb_rows}
+
             return render_template(
                 "devices.html",
                 devices=devices_list,
@@ -338,6 +353,7 @@ def create_app() -> tuple[Flask, SocketIO]:
                 page=page,
                 per_page=per_page,
                 total=total,
+                heartbeat_map=heartbeat_map,
             )
         finally:
             session.close()
@@ -1202,6 +1218,32 @@ def create_app() -> tuple[Flask, SocketIO]:
             "tagged": tagged,
             "total": len(device_ids),
         })
+
+    @app.route("/api/heartbeats")
+    def api_heartbeats():
+        session = get_session()
+        try:
+            rows = (
+                session.query(DeviceHeartbeat, Device, Tag)
+                .join(Device, DeviceHeartbeat.device_id == Device.id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .all()
+            )
+            return jsonify([
+                {
+                    "device_id": dev.id,
+                    "mac": dev.mac,
+                    "label": (tag.label if tag else None) or dev.alias or dev.vendor or dev.mac,
+                    "last_seen": hb.last_seen.isoformat() if hb.last_seen else None,
+                    "expected_interval_minutes": hb.expected_interval_minutes,
+                    "status": hb.status,
+                    "consecutive_misses": hb.consecutive_misses,
+                    "alerted_at": hb.alerted_at.isoformat() if hb.alerted_at else None,
+                }
+                for hb, dev, tag in rows
+            ])
+        finally:
+            session.close()
 
     @app.route("/snapshots/<path:filename>")
     def serve_snapshot(filename):

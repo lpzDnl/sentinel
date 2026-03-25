@@ -49,6 +49,16 @@
             {% else %}
               <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--text-muted)" title="Inactive"></span>
             {% endif %}
+            {% if tag and tag.category == 'resident' %}
+              {% set hb_status = heartbeat_map.get(dev.id, 'unknown') %}
+              {% if hb_status == 'online' %}
+                <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#3fb950;margin-left:3px" title="Resident: online"></span>
+              {% elif hb_status == 'offline' %}
+                <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#f85149;margin-left:3px" title="Resident: offline"></span>
+              {% else %}
+                <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#6e7681;margin-left:3px" title="Resident: unknown"></span>
+              {% endif %}
+            {% endif %}
           </td>
           <td class="mac">
             <a href="/devices/{{ dev.id }}">{{ dev.mac }}</a>
