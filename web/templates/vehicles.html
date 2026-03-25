@@ -17,6 +17,73 @@
   opacity: 0; margin-left: 5px; font-size: 0.7rem;
   color: var(--text-muted); transition: opacity 0.15s;
 }
+
+/* expandable timing row */
+.timing-row td {
+  padding: 0;
+  background: #0d1117;
+}
+.timing-panel {
+  padding: 1rem 1.2rem;
+  border-top: 1px solid #21262d;
+  border-bottom: 1px solid #21262d;
+}
+.timing-panel .tp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+@media (max-width: 700px) {
+  .timing-panel .tp-grid { grid-template-columns: 1fr; }
+}
+.timing-panel .tp-title {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 0.4rem;
+}
+.bar-wrap {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 48px;
+}
+.bar-wrap .bar {
+  flex: 1;
+  background: var(--cyan);
+  min-height: 2px;
+  border-radius: 1px 1px 0 0;
+  transition: opacity 0.15s;
+  position: relative;
+  cursor: default;
+}
+.bar-wrap .bar:hover { opacity: 0.75; }
+.bar-labels {
+  display: flex;
+  gap: 2px;
+  font-size: 0.55rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.bar-labels span { flex: 1; text-align: center; overflow: hidden; }
+.tp-stats {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 0.8rem;
+  flex-wrap: wrap;
+}
+.tp-stat { font-size: 0.75rem; }
+.tp-stat .val { color: var(--amber); font-weight: 600; }
+.tp-stat .lbl { color: var(--text-muted); margin-left: 0.25rem; }
+.timing-row-btn {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  padding: 0 4px;
+}
+.timing-row-btn:hover { color: var(--cyan); }
 </style>
 {% endblock %}
 
@@ -71,6 +138,7 @@
   <div class="table-wrap">
     <table id="tbl-vehicles">
       <thead><tr>
+        <th data-nosort style="width:1.5rem"></th>
         <th>Sensor ID</th>
         <th>Make / Model</th>
         <th>First Seen</th>
@@ -92,7 +160,10 @@
           {% set row_color = 'var(--green)' %}
           {% set sighting_class = 'veh-green' %}
         {% endif %}
-        <tr>
+        <tr class="vehicle-data-row" data-sensor="{{ p.sensor_id | e }}" data-model="{{ p.model | e if p.model else '' }}">
+          <td>
+            <span class="timing-row-btn" title="Show timing analysis" onclick="toggleTiming(this, '{{ p.sensor_id | e }}', {{ p.model | tojson_safe }})">▶</span>
+          </td>
           <td>
             <span style="font-size:0.78rem;color:{{ row_color }};font-weight:500">{{ p.sensor_id }}</span>
           </td>
@@ -150,9 +221,16 @@
             </span>
           </td>
         </tr>
+        <tr class="timing-row" id="timing-{{ p.sensor_id | e }}" style="display:none">
+          <td colspan="9">
+            <div class="timing-panel" id="timing-panel-{{ p.sensor_id | e }}">
+              <span class="text-muted" style="font-size:0.75rem">Loading…</span>
+            </div>
+          </td>
+        </tr>
         {% endfor %}
         {% if not profiles %}
-        <tr><td colspan="8" class="empty-state">
+        <tr><td colspan="9" class="empty-state">
           No vehicle profiles yet — requires RTL-SDR dongle with sentinel-sdr running
         </td></tr>
         {% endif %}
@@ -281,5 +359,99 @@ function saveVehicle(e) {
 }
 
 initSortable('tbl-vehicles');
+
+var _timingLoaded = {};
+
+function toggleTiming(btn, sensorId, model) {
+  var row = document.getElementById('timing-' + sensorId);
+  if (!row) return;
+  var open = row.style.display !== 'none';
+  if (open) {
+    row.style.display = 'none';
+    btn.textContent = '▶';
+    return;
+  }
+  row.style.display = '';
+  btn.textContent = '▼';
+  if (_timingLoaded[sensorId]) return;
+  _timingLoaded[sensorId] = true;
+
+  var url = model
+    ? '/api/vehicles/model/' + encodeURIComponent(model) + '/timeline'
+    : '/api/vehicles/' + encodeURIComponent(sensorId) + '/timeline';
+
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(d) { renderTimingPanel(sensorId, d); })
+    .catch(function(e) {
+      var panel = document.getElementById('timing-panel-' + sensorId);
+      if (panel) panel.innerHTML = '<span style="color:var(--red);font-size:0.75rem">Error loading timing data</span>';
+    });
+}
+
+function renderTimingPanel(sensorId, d) {
+  var panel = document.getElementById('timing-panel-' + sensorId);
+  if (!panel) return;
+
+  var hourMax = Math.max.apply(null, d.hourly) || 1;
+  var dayMax  = Math.max.apply(null, d.daily)  || 1;
+  var dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+  // Hour bars
+  var hourBars = '<div class="bar-wrap">';
+  for (var h = 0; h < 24; h++) {
+    var pct = Math.round((d.hourly[h] / hourMax) * 100);
+    var title = h + ':00 — ' + d.hourly[h] + ' signal' + (d.hourly[h] !== 1 ? 's' : '');
+    hourBars += '<div class="bar" style="height:' + Math.max(pct, 2) + '%"'
+      + ' title="' + title + '"></div>';
+  }
+  hourBars += '</div>';
+  var hourLabels = '<div class="bar-labels">';
+  for (var h = 0; h < 24; h++) {
+    hourLabels += '<span>' + (h % 6 === 0 ? h : '') + '</span>';
+  }
+  hourLabels += '</div>';
+
+  // Day bars
+  var dayBars = '<div class="bar-wrap">';
+  for (var d2 = 0; d2 < 7; d2++) {
+    var pct2 = Math.round((d.daily[d2] / dayMax) * 100);
+    var title2 = dayNames[d2] + ' — ' + d.daily[d2] + ' signal' + (d.daily[d2] !== 1 ? 's' : '');
+    dayBars += '<div class="bar" style="height:' + Math.max(pct2, 2) + '%;background:var(--amber)"'
+      + ' title="' + title2 + '"></div>';
+  }
+  dayBars += '</div>';
+  var dayLabels = '<div class="bar-labels">';
+  for (var d3 = 0; d3 < 7; d3++) {
+    dayLabels += '<span>' + dayNames[d3] + '</span>';
+  }
+  dayLabels += '</div>';
+
+  var avgDur = d.avg_visit_duration_minutes < 1
+    ? '&lt;1 min'
+    : d.avg_visit_duration_minutes.toFixed(1) + ' min';
+
+  var scopeLabel = d.model
+    ? '<span style="font-size:0.68rem;color:var(--amber);margin-bottom:0.5rem;display:block">'
+        + 'Aggregated across all <strong>' + d.model + '</strong> sensors</span>'
+    : '';
+
+  panel.innerHTML =
+    scopeLabel
+    + '<div class="tp-grid">'
+    + '<div>'
+        + '<div class="tp-title">Hour of Day</div>'
+        + hourBars + hourLabels
+      + '</div>'
+    + '<div>'
+        + '<div class="tp-title">Day of Week</div>'
+        + dayBars + dayLabels
+      + '</div>'
+    + '</div>'
+    + '<div class="tp-stats">'
+    + '<span class="tp-stat"><span class="val">' + d.total_visits + '</span><span class="lbl">visits</span></span>'
+    + '<span class="tp-stat"><span class="val">' + avgDur + '</span><span class="lbl">avg visit duration</span></span>'
+    + '</div>';
+}
 </script>
 {% endblock %}

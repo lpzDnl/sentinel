@@ -924,6 +924,130 @@ def create_app() -> tuple[Flask, SocketIO]:
         finally:
             session.close()
 
+    @app.route("/api/vehicles/model/<model_name>/timeline")
+    def api_vehicle_model_timeline(model_name):
+        session = get_session()
+        try:
+            signals = (
+                session.query(SdrSignal.timestamp)
+                .filter(SdrSignal.model == model_name)
+                .order_by(SdrSignal.timestamp)
+                .all()
+            )
+            if not signals:
+                return jsonify({"status": "error", "message": "no signals found"}), 404
+
+            hourly = [0] * 24
+            daily  = [0] * 7
+
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("America/Denver")
+
+            visits = []
+            visit_start = None
+            visit_last  = None
+
+            for (ts,) in signals:
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                local_ts = ts.astimezone(tz)
+                hourly[local_ts.hour] += 1
+                daily[local_ts.weekday()] += 1
+
+                if visit_start is None:
+                    visit_start = visit_last = ts
+                elif (ts - visit_last).total_seconds() > 300:
+                    visits.append((visit_start, visit_last))
+                    visit_start = visit_last = ts
+                else:
+                    visit_last = ts
+
+            if visit_start is not None:
+                visits.append((visit_start, visit_last))
+
+            total_visits = len(visits)
+            if visits:
+                durations = [(v[1] - v[0]).total_seconds() / 60.0 for v in visits]
+                avg_dur = round(sum(durations) / len(durations), 1)
+            else:
+                avg_dur = 0.0
+
+            return jsonify({
+                "model": model_name,
+                "hourly": hourly,
+                "daily": daily,
+                "total_visits": total_visits,
+                "avg_visit_duration_minutes": avg_dur,
+            })
+        finally:
+            session.close()
+
+    @app.route("/api/vehicles/<path:sensor_id>/timeline")
+    def api_vehicle_timeline(sensor_id):
+        session = get_session()
+        try:
+            profile = (
+                session.query(VehicleProfile)
+                .filter(VehicleProfile.sensor_id == sensor_id)
+                .first()
+            )
+            if not profile:
+                return jsonify({"status": "error", "message": "not found"}), 404
+
+            signals = (
+                session.query(SdrSignal.timestamp)
+                .filter(SdrSignal.device_uid == sensor_id)
+                .order_by(SdrSignal.timestamp)
+                .all()
+            )
+
+            hourly = [0] * 24
+            daily  = [0] * 7  # 0=Mon … 6=Sun
+
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("America/Denver")
+
+            visits = []
+            visit_start = None
+            visit_last  = None
+
+            for (ts,) in signals:
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                local_ts = ts.astimezone(tz)
+                hourly[local_ts.hour] += 1
+                daily[local_ts.weekday()] += 1
+
+                # Visit clustering: gap > 5 min → new visit
+                if visit_start is None:
+                    visit_start = visit_last = ts
+                elif (ts - visit_last).total_seconds() > 300:
+                    visits.append((visit_start, visit_last))
+                    visit_start = visit_last = ts
+                else:
+                    visit_last = ts
+
+            if visit_start is not None:
+                visits.append((visit_start, visit_last))
+
+            total_visits = len(visits)
+            if visits:
+                durations = [(v[1] - v[0]).total_seconds() / 60.0 for v in visits]
+                avg_dur = round(sum(durations) / len(durations), 1)
+            else:
+                avg_dur = 0.0
+
+            return jsonify({
+                "sensor_id": sensor_id,
+                "model": profile.model,
+                "hourly": hourly,
+                "daily": daily,
+                "total_visits": total_visits,
+                "avg_visit_duration_minutes": avg_dur,
+            })
+        finally:
+            session.close()
+
     @app.route("/api/stats")
     def api_stats():
         session = get_session()

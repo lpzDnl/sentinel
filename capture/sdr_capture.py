@@ -46,7 +46,10 @@ _CLASS_RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(
         r"TPMS|Tire|Tyre|Schrader|Steelmate|Citroen|Kia.*TPMS|BMW.*TPMS|"
         r"Nissan.*TPMS|Audi.*TPMS|GM.*TPMS|EezTire|Carchet|TST-507|"
-        r"TyreGuard|TireGuard|GM.Aftermarket",
+        r"TyreGuard|TireGuard|GM.Aftermarket|"
+        r"Abarth|Ford|Hyundai|Renault|Toyota|Truck|PMV-107J|"
+        r"Volkswagen|Peugeot|Opel|Fiat|Mazda|Honda|Subaru|Mitsubishi|"
+        r"Chrysler|Dodge|Jeep|Chevrolet|Buick|Cadillac|Lincoln|Mercury",
         re.IGNORECASE,
     ), "tpms"),
 
