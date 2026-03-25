@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %} — Border Crosser Analysis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>BORDER CROSSER ANALYSIS</h1>
+  <span class="subtitle">Devices with Mexican carrier network history</span>
+</div>
+
+{# Summary stats #}
+<div class="grid grid-3 mb-1">
+  <div class="card stat-card red">
+    <div class="card-header">Border Devices</div>
+    <div class="card-value">{{ total_border }}</div>
+    <div class="card-footer">devices with MX carrier probes</div>
+  </div>
+  <div class="card stat-card amber">
+    <div class="card-header">Unique MX Carriers</div>
+    <div class="card-value">{{ unique_carriers | length }}</div>
+    <div class="card-footer">
+      {% if unique_carriers %}
+        {{ unique_carriers | join(', ') }}
+      {% else %}
+        none detected
+      {% endif %}
+    </div>
+  </div>
+  <div class="card stat-card blue">
+    <div class="card-header">Top MX SSID</div>
+    <div class="card-value" style="font-size:0.95rem;word-break:break-all">
+      {% if top_mx_ssid %}{{ top_mx_ssid }}{% else %}—{% endif %}
+    </div>
+    <div class="card-footer">most commonly probed</div>
+  </div>
+</div>
+
+{% if rows %}
+<div class="card">
+  <div class="card-header">
+    Border Device List
+    <span class="text-dim" style="font-weight:400;font-size:0.68rem;margin-left:0.5rem">
+      — devices that have probed for INFINITUM, Totalplay, izzi, or Telmex SSIDs
+    </span>
+  </div>
+  <div class="table-wrap">
+    <table id="border-table">
+      <thead>
+        <tr>
+          <th>MAC</th>
+          <th>Vendor</th>
+          <th>Tag</th>
+          <th>Mexican SSIDs Probed</th>
+          <th>US SSIDs Probed</th>
+          <th data-val="">First Seen</th>
+          <th data-val="">Last Seen</th>
+          <th>Sightings</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        {% set dev = row.device %}
+        {% set tag = row.tag %}
+        <tr>
+          <td class="mac">
+            <a href="/devices/{{ dev.id }}">{{ dev.mac }}</a>
+            {% if dev.is_randomized %}
+              <span class="badge badge-dim" style="margin-left:4px">RAND</span>
+            {% endif %}
+          </td>
+          <td class="text-dim">{{ dev.vendor or '—' }}</td>
+          <td>
+            {% if tag and tag.category != 'unknown' %}
+              <span class="badge badge-tag tag-{{ tag.category }}">{{ tag.category }}</span>
+              {% if tag.label %}<span class="text-dim" style="margin-left:4px;font-size:0.72rem">{{ tag.label }}</span>{% endif %}
+              {% if tag.flagged %} <span class="badge badge-red">FLAGGED</span>{% endif %}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% for ssid in row.mx_ssids %}
+              <span class="badge badge-red" style="margin:1px 2px 1px 0">{{ ssid }}</span>
+            {% endfor %}
+          </td>
+          <td>
+            {% if row.us_ssids %}
+              {% for ssid in row.us_ssids[:5] %}
+                <span class="badge badge-dim" style="margin:1px 2px 1px 0">{{ ssid }}</span>
+              {% endfor %}
+              {% if row.us_ssids | length > 5 %}
+                <span class="text-muted" style="font-size:0.68rem">+{{ row.us_ssids | length - 5 }} more</span>
+              {% endif %}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td data-val="{{ dev.first_seen.timestamp() if dev.first_seen else 0 }}">
+            {{ dev.first_seen | localtime if dev.first_seen else '—' }}
+          </td>
+          <td data-val="{{ dev.last_seen.timestamp() if dev.last_seen else 0 }}">
+            {{ dev.last_seen | localtime if dev.last_seen else '—' }}
+          </td>
+          <td>{{ dev.total_sightings or 0 }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="empty-state">
+    No devices found with Mexican carrier network probe history.<br>
+    <span class="text-muted" style="font-size:0.75rem">Watching for INFINITUM, Totalplay, izzi, Telmex SSIDs in probe requests.</span>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  initSortable('border-table');
+});
+</script>
+{% endblock %}

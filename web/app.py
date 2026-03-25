@@ -735,6 +735,116 @@ def create_app() -> tuple[Flask, SocketIO]:
         finally:
             session.close()
 
+    @app.route("/border")
+    def border():
+        session = get_session()
+        try:
+            from sqlalchemy import func, or_
+
+            # Mexican carrier SSID patterns
+            MX_PATTERNS = [
+                "%INFINITUM%",
+                "%Totalplay%",
+                "%totalplay%",
+                "%izzi%",
+                "%Telmex%",
+                "%telmex%",
+            ]
+
+            mx_filter = or_(*[ProbeRequest.ssid.ilike(p) for p in MX_PATTERNS])
+
+            # Device IDs that have at least one Mexican carrier probe
+            mx_device_ids_q = (
+                session.query(ProbeRequest.device_id)
+                .filter(mx_filter, ProbeRequest.ssid.isnot(None))
+                .distinct()
+                .subquery()
+            )
+
+            # All devices matching that set
+            border_devices_q = (
+                session.query(Device, Tag)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter(Device.id.in_(mx_device_ids_q))
+                .order_by(Device.last_seen.desc())
+                .all()
+            )
+
+            # For each device collect MX and US SSIDs
+            device_ids = [d.id for d, _ in border_devices_q]
+
+            # All probes for these devices
+            all_probes = (
+                session.query(ProbeRequest.device_id, ProbeRequest.ssid)
+                .filter(
+                    ProbeRequest.device_id.in_(device_ids),
+                    ProbeRequest.ssid.isnot(None),
+                )
+                .distinct()
+                .all()
+            )
+
+            # Build per-device SSID sets
+            from collections import defaultdict
+            device_ssids: dict[int, list[str]] = defaultdict(list)
+            for did, ssid in all_probes:
+                device_ssids[did].append(ssid)
+
+            def _is_mx(ssid: str) -> bool:
+                sl = ssid.lower()
+                return any(k in sl for k in ("infinitum", "totalplay", "izzi", "telmex"))
+
+            rows = []
+            all_mx_ssids: list[str] = []
+            for dev, tag in border_devices_q:
+                ssids = device_ssids.get(dev.id, [])
+                mx_ssids = sorted({s for s in ssids if _is_mx(s)})
+                us_ssids = sorted({s for s in ssids if not _is_mx(s)})
+                all_mx_ssids.extend(mx_ssids)
+                rows.append({
+                    "device": dev,
+                    "tag": tag,
+                    "mx_ssids": mx_ssids,
+                    "us_ssids": us_ssids,
+                })
+
+            # Summary stats
+            total_border = len(rows)
+
+            mx_carriers = set()
+            carrier_map = {
+                "INFINITUM": "Telmex/INFINITUM",
+                "infinitum": "Telmex/INFINITUM",
+                "Telmex": "Telmex/INFINITUM",
+                "telmex": "Telmex/INFINITUM",
+                "Totalplay": "Totalplay",
+                "totalplay": "Totalplay",
+                "izzi": "izzi",
+            }
+            for ssid in all_mx_ssids:
+                sl = ssid.lower()
+                if "infinitum" in sl or "telmex" in sl:
+                    mx_carriers.add("Telmex/INFINITUM")
+                if "totalplay" in sl:
+                    mx_carriers.add("Totalplay")
+                if "izzi" in sl:
+                    mx_carriers.add("izzi")
+
+            # Most common Mexican SSID
+            from collections import Counter
+            mx_counter = Counter(all_mx_ssids)
+            top_mx_ssid = mx_counter.most_common(1)[0][0] if mx_counter else None
+
+            return render_template(
+                "border.html",
+                rows=rows,
+                total_border=total_border,
+                unique_carriers=sorted(mx_carriers),
+                top_mx_ssid=top_mx_ssid,
+            )
+        finally:
+            session.close()
+
     # -- API routes --
 
     @app.route("/api/vehicles/<int:profile_id>", methods=["POST"])
