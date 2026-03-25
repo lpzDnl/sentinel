@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %} — Intelligence{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>INTELLIGENCE</h1>
+  <span class="subtitle">threat digest &middot; generated {{ generated_at | localtime }}</span>
+</div>
+
+<!-- Summary stat cards -->
+<div class="grid grid-4 mb-1">
+  <div class="card stat-card red">
+    <div class="card-header">High-Threat Devices</div>
+    <div class="card-value">{{ high_threat | length }}</div>
+    <div class="card-footer">RED / YELLOW alerts in last 24h</div>
+  </div>
+  <div class="card stat-card amber">
+    <div class="card-header">New Unknowns</div>
+    <div class="card-value">{{ new_unknown | length }}</div>
+    <div class="card-footer">first seen in last 24h, no vendor ID</div>
+  </div>
+  <div class="card stat-card blue">
+    <div class="card-header">Recurring Vehicles</div>
+    <div class="card-value">{{ tpms_counts | length }}</div>
+    <div class="card-footer">TPMS IDs seen 3+ times in 7 days</div>
+  </div>
+  <div class="card stat-card yellow">
+    <div class="card-header">Night Events</div>
+    <div class="card-value">{{ night_events | length }}</div>
+    <div class="card-footer">activity 00:00–05:00 local in last 24h</div>
+  </div>
+</div>
+
+<!-- 1. High-threat devices -->
+<div class="card mt-1">
+  <div class="card-header">High-Threat Devices &mdash; RED / YELLOW in last 24h</div>
+  {% if high_threat %}
+  <div class="table-wrap">
+    <table id="tbl-threat">
+      <thead><tr>
+        <th>Level</th>
+        <th>Alert Type</th>
+        <th>Device</th>
+        <th>Vendor</th>
+        <th>Tag</th>
+        <th>Last Seen</th>
+        <th>Alert Time</th>
+        <th data-nosort></th>
+      </tr></thead>
+      <tbody>
+        {% for row in high_threat %}
+        <tr>
+          <td>
+            {% if row.level == 'red' %}
+            <span class="badge badge-red">RED</span>
+            {% elif row.level == 'yellow' %}
+            <span class="badge badge-yellow">YELLOW</span>
+            {% else %}
+            <span class="badge badge-dim">{{ row.level }}</span>
+            {% endif %}
+          </td>
+          <td><span class="badge badge-dim">{{ row.atype | replace("_", " ") }}</span></td>
+          <td>
+            {% if row.device %}
+            <span class="mac">
+              <a href="/devices/{{ row.device.id }}">{{ row.device.alias or row.device.mac }}</a>
+            </span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="text-dim">{{ row.device.vendor if row.device and row.device.vendor else '—' }}</span>
+          </td>
+          <td>
+            {% if row.tag %}
+            <span class="badge badge-tag tag-{{ row.tag.category }}">{{ row.tag.category }}{% if row.tag.label %} &middot; {{ row.tag.label }}{% endif %}</span>
+            {% if row.tag.flagged %}<span class="badge badge-red" style="margin-left:4px">FLAGGED</span>{% endif %}
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td data-val="{{ row.device.last_seen.timestamp() if row.device and row.device.last_seen else 0 }}">
+            <span class="text-dim">{{ row.device.last_seen | timeago if row.device else '—' }}</span>
+          </td>
+          <td data-val="{{ row.alert.timestamp.timestamp() if row.alert.timestamp else 0 }}">
+            <span class="text-muted">{{ row.alert.timestamp | localtime }}</span>
+          </td>
+          <td>
+            {% if row.device %}
+            <a href="/devices/{{ row.device.id }}" class="btn btn-sm">Detail</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">No RED or YELLOW alerts in the last 24 hours</div>
+  {% endif %}
+</div>
+
+<!-- 2. New unknown devices -->
+<div class="card mt-1">
+  <div class="card-header">New Unknown Devices &mdash; first seen in last 24h, no vendor ID</div>
+  {% if new_unknown %}
+  <div class="table-wrap">
+    <table id="tbl-new-unknown">
+      <thead><tr>
+        <th>MAC</th>
+        <th>Type</th>
+        <th>Randomized</th>
+        <th>Hostname</th>
+        <th>First Seen</th>
+        <th>Sightings</th>
+        <th data-nosort></th>
+      </tr></thead>
+      <tbody>
+        {% for dev, tag in new_unknown %}
+        <tr>
+          <td><span class="mac"><a href="/devices/{{ dev.id }}">{{ dev.mac }}</a></span></td>
+          <td>
+            {% if dev.device_type == 'wifi' %}
+            <span class="badge badge-blue">WiFi</span>
+            {% elif 'bluetooth' in (dev.device_type or '') %}
+            <span class="badge badge-purple">BT</span>
+            {% else %}
+            <span class="badge badge-dim">{{ dev.device_type or '?' }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if dev.is_randomized %}
+            <span class="badge badge-yellow">RAND</span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td><span class="text-dim">{{ dev.hostname or '—' }}</span></td>
+          <td data-val="{{ dev.first_seen.timestamp() if dev.first_seen else 0 }}">
+            <span class="text-dim">{{ dev.first_seen | localtime }}</span>
+          </td>
+          <td data-val="{{ dev.total_sightings or 0 }}">{{ dev.total_sightings or 0 }}</td>
+          <td><a href="/devices/{{ dev.id }}" class="btn btn-sm">Detail</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">No new unidentified devices in the last 24 hours</div>
+  {% endif %}
+</div>
+
+<!-- 3. Recurring TPMS vehicles -->
+<div class="card mt-1">
+  <div class="card-header">Recurring Vehicles (TPMS) &mdash; 3+ sightings in last 7 days</div>
+  {% if tpms_counts %}
+  <div class="table-wrap">
+    <table id="tbl-tpms">
+      <thead><tr>
+        <th>Device UID</th>
+        <th>Model</th>
+        <th>Sightings</th>
+        <th>Avg RSSI</th>
+        <th>First Seen</th>
+        <th>Last Seen</th>
+        <th>Tag</th>
+      </tr></thead>
+      <tbody>
+        {% for row in tpms_counts %}
+        {% set stag = tpms_tags.get(row.device_uid) %}
+        <tr>
+          <td><span class="mac">{{ row.device_uid or '—' }}</span></td>
+          <td><span class="text-dim">{{ row.model or '—' }}</span></td>
+          <td data-val="{{ row.sightings }}">
+            <span class="fw-bold {% if row.sightings >= 10 %}text-red{% elif row.sightings >= 5 %}text-amber{% else %}text-green{% endif %}">
+              {{ row.sightings }}
+            </span>
+          </td>
+          <td data-val="{{ row.avg_rssi | round(1) if row.avg_rssi else 0 }}">
+            <span class="text-dim">{{ '%.1f' | format(row.avg_rssi) if row.avg_rssi else '—' }} dBm</span>
+          </td>
+          <td data-val="{{ row.first_seen.timestamp() if row.first_seen else 0 }}">
+            <span class="text-muted">{{ row.first_seen | localtime if row.first_seen else '—' }}</span>
+          </td>
+          <td data-val="{{ row.last_seen.timestamp() if row.last_seen else 0 }}">
+            <span class="text-dim">{{ row.last_seen | timeago if row.last_seen else '—' }}</span>
+          </td>
+          <td>
+            {% if stag %}
+            <span class="badge badge-tag tag-{{ stag.category }}">{{ stag.category }}{% if stag.label %} &middot; {{ stag.label }}{% endif %}</span>
+            {% if stag.flagged %}<span class="badge badge-red" style="margin-left:4px">FLAGGED</span>{% endif %}
+            {% else %}
+            <span class="badge badge-dim">untagged</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">No TPMS devices seen 3+ times in the last 7 days</div>
+  {% endif %}
+</div>
+
+<!-- 4. Night activity -->
+<div class="card mt-1">
+  <div class="card-header">Night Activity &mdash; 00:00–05:00 local time in last 24h</div>
+  {% if night_events %}
+  <div class="feed" id="night-feed" style="max-height:400px">
+    {% for evt, dev, tag in night_events %}
+    <div class="feed-item" {% if dev %}data-href="/devices/{{ dev.id }}"{% endif %}>
+      <span class="time">{{ evt.timestamp | localtime | truncate(8, killwords=True, end='') }}</span>
+      <span class="type">
+        <span class="badge evt-{{ evt.event_type }}">{{ evt.event_type | replace("_"," ") }}</span>
+      </span>
+      <span class="detail">
+        {% if dev %}
+        <a href="/devices/{{ dev.id }}" class="mac" style="font-size:0.78rem">{{ dev.alias or dev.vendor or dev.mac }}</a>
+        {% else %}
+        <span class="text-muted">unknown device</span>
+        {% endif %}
+        {% if tag %}
+        &nbsp;<span class="badge badge-tag tag-{{ tag.category }}">{{ tag.category }}{% if tag.label %} &middot; {{ tag.label }}{% endif %}</span>
+        {% if tag.flagged %}&nbsp;<span class="badge badge-red">FLAGGED</span>{% endif %}
+        {% endif %}
+        {% if evt.camera %}&nbsp;<span class="text-muted">&middot; {{ evt.camera }}</span>{% endif %}
+        {% if evt.ssid %}&nbsp;<span class="text-muted">&middot; {{ evt.ssid }}</span>{% endif %}
+        {% if evt.rssi %}&nbsp;<span class="text-muted">&middot; {{ evt.rssi }} dBm</span>{% endif %}
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">No activity detected between 00:00–05:00 in the last 24 hours</div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+initSortable('tbl-threat');
+initSortable('tbl-new-unknown');
+initSortable('tbl-tpms');
+</script>
+{% endblock %}

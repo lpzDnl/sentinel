@@ -430,7 +430,10 @@ class WiFiCaptureEngine:
                 )
                 if visit:
                     visit.departed_at = now
-                    visit.duration_seconds = int((now - visit.arrived_at).total_seconds())
+                    arrived = visit.arrived_at
+                    if arrived.tzinfo is None:
+                        arrived = arrived.replace(tzinfo=timezone.utc)
+                    visit.duration_seconds = int((now - arrived).total_seconds())
 
                 # Log departure event
                 dep_event = Event(

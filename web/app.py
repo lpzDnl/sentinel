@@ -549,6 +549,127 @@ def create_app() -> tuple[Flask, SocketIO]:
         finally:
             session.close()
 
+    @app.route("/intelligence")
+    def intelligence():
+        session = get_session()
+        try:
+            from sqlalchemy import func
+            now = datetime.now(timezone.utc)
+            cutoff_24h = now - timedelta(hours=24)
+            cutoff_7d  = now - timedelta(days=7)
+
+            # 1. High-threat devices: RED/YELLOW alerts in last 24h
+            threat_rows = (
+                session.query(AlertLog, Device, Tag)
+                .outerjoin(Device, AlertLog.device_id == Device.id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter(
+                    AlertLog.timestamp >= cutoff_24h,
+                    (AlertLog.alert_type.startswith("red:"))
+                    | (AlertLog.alert_type.startswith("yellow:")),
+                )
+                .order_by(AlertLog.timestamp.desc())
+                .limit(50)
+                .all()
+            )
+            # Deduplicate by device_id, keep highest-level alert per device
+            seen_device_ids = set()
+            high_threat = []
+            for alert, dev, tag in threat_rows:
+                key = dev.id if dev else None
+                if key in seen_device_ids:
+                    continue
+                seen_device_ids.add(key)
+                parts = alert.alert_type.split(":", 1)
+                lvl   = parts[0] if len(parts) > 1 else ""
+                atype = parts[1] if len(parts) > 1 else alert.alert_type
+                high_threat.append({
+                    "alert":  alert,
+                    "device": dev,
+                    "tag":    tag,
+                    "level":  lvl,
+                    "atype":  atype,
+                })
+
+            # 2. New unknown devices: first seen in last 24h, no vendor, no non-unknown tag
+            new_unknown = (
+                session.query(Device, Tag)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter(
+                    Device.first_seen >= cutoff_24h,
+                    (Device.vendor.is_(None) | (Device.vendor == "")),
+                    (Tag.id.is_(None) | (Tag.category == "unknown")),
+                )
+                .order_by(Device.first_seen.desc())
+                .limit(50)
+                .all()
+            )
+
+            # 3. Recurring TPMS vehicles: seen 3+ times in last 7 days, grouped by device_uid
+            tpms_counts = (
+                session.query(
+                    SdrSignal.device_uid,
+                    SdrSignal.model,
+                    func.count(SdrSignal.id).label("sightings"),
+                    func.min(SdrSignal.timestamp).label("first_seen"),
+                    func.max(SdrSignal.timestamp).label("last_seen"),
+                    func.avg(SdrSignal.rssi).label("avg_rssi"),
+                )
+                .filter(
+                    SdrSignal.signal_class == "tpms",
+                    SdrSignal.timestamp >= cutoff_7d,
+                )
+                .group_by(SdrSignal.device_uid, SdrSignal.model)
+                .having(func.count(SdrSignal.id) >= 3)
+                .order_by(func.count(SdrSignal.id).desc())
+                .limit(30)
+                .all()
+            )
+
+            # Fetch SDR tags for those device_uids
+            tpms_uids = [r.device_uid for r in tpms_counts if r.device_uid]
+            tpms_tags = {}
+            if tpms_uids:
+                rows = session.query(SdrDeviceTag).filter(SdrDeviceTag.device_uid.in_(tpms_uids)).all()
+                tpms_tags = {t.device_uid: t for t in rows}
+
+            # 4. Night activity: events between 00:00–05:00 local time in last 24h
+            # Build per-hour UTC windows for local hours 0-4 across last 24h
+            local_now = datetime.now(_local_tz)
+            night_events = []
+            for h in range(5):  # hours 0-4
+                local_night = local_now.replace(hour=h, minute=0, second=0, microsecond=0)
+                # Could be today or yesterday depending on current local hour
+                if local_night > local_now:
+                    local_night -= timedelta(days=1)
+                window_start = local_night.astimezone(timezone.utc)
+                window_end   = window_start + timedelta(hours=1)
+                if window_start >= cutoff_24h:
+                    evts = (
+                        session.query(Event, Device, Tag)
+                        .outerjoin(Device, Event.device_id == Device.id)
+                        .outerjoin(Tag, Device.id == Tag.device_id)
+                        .filter(Event.timestamp.between(window_start, window_end))
+                        .order_by(Event.timestamp.desc())
+                        .limit(20)
+                        .all()
+                    )
+                    night_events.extend(evts)
+
+            night_events.sort(key=lambda x: x[0].timestamp, reverse=True)
+
+            return render_template(
+                "intelligence.html",
+                high_threat=high_threat,
+                new_unknown=new_unknown,
+                tpms_counts=tpms_counts,
+                tpms_tags=tpms_tags,
+                night_events=night_events,
+                generated_at=now,
+            )
+        finally:
+            session.close()
+
     @app.route("/sdr")
     def sdr():
         session = get_session()
