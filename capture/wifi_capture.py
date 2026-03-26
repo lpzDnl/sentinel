@@ -346,6 +346,7 @@ class WiFiCaptureEngine:
         self.tracker = DeviceTracker(timeout=self.cfg.get("device_timeout", 300))
         self._stop = threading.Event()
         self._departure_thread: threading.Thread | None = None
+        self._janitor_thread: threading.Thread | None = None
         self.heartbeat_monitor = ResidentHeartbeatMonitor()
 
         # Stats
@@ -375,6 +376,12 @@ class WiFiCaptureEngine:
             target=self._departure_loop, daemon=True, name="departure-checker"
         )
         self._departure_thread.start()
+
+        # Start visit janitor
+        self._janitor_thread = threading.Thread(
+            target=self._janitor_loop, daemon=True, name="visit-janitor"
+        )
+        self._janitor_thread.start()
 
         # Start resident heartbeat monitor
         self.heartbeat_monitor.start()
@@ -535,26 +542,46 @@ class WiFiCaptureEngine:
             )
             session.add(event)
 
-            # Start visit on arrival
+            # Start visit on arrival — but first verify no open visit already
+            # exists in the DB.  The in-memory tracker loses state on service
+            # restart, so without this check every device would appear as a
+            # fresh arrival and a new visit would be opened on top of an
+            # existing one, producing spurious 5-minute visit cycles.
             if is_arrival:
-                visit = Visit(
-                    device_id=device.id,
-                    arrived_at=datetime.now(timezone.utc),
-                    max_rssi=rssi,
-                    event_count=1,
+                open_visit = (
+                    session.query(Visit)
+                    .filter(
+                        Visit.device_id == device.id,
+                        Visit.departed_at.is_(None),
+                    )
+                    .order_by(Visit.arrived_at.desc())
+                    .first()
                 )
-                session.add(visit)
+                if open_visit is not None:
+                    # Device already has an open visit — treat probe as
+                    # continuation rather than a new arrival.
+                    open_visit.event_count = (open_visit.event_count or 0) + 1
+                    if rssi and (open_visit.max_rssi is None or rssi > open_visit.max_rssi):
+                        open_visit.max_rssi = rssi
+                else:
+                    visit = Visit(
+                        device_id=device.id,
+                        arrived_at=datetime.now(timezone.utc),
+                        max_rssi=rssi,
+                        event_count=1,
+                    )
+                    session.add(visit)
 
-                arrival_event = Event(
-                    device_id=device.id,
-                    event_type="arrival",
-                    source="wifi_tracker",
-                    rssi=rssi,
-                )
-                session.add(arrival_event)
+                    arrival_event = Event(
+                        device_id=device.id,
+                        event_type="arrival",
+                        source="wifi_tracker",
+                        rssi=rssi,
+                    )
+                    session.add(arrival_event)
 
-                # Cross-sensor correlation: look for a recent TPMS signal
-                self._correlate_tpms(session, device, rssi)
+                    # Cross-sensor correlation: look for a recent TPMS signal
+                    self._correlate_tpms(session, device, rssi)
             else:
                 # Update current visit event count and max RSSI
                 current_visit = (
@@ -742,6 +769,75 @@ class WiFiCaptureEngine:
         except Exception as e:
             session.rollback()
             logger.error("Departure flush failed: %s", e)
+        finally:
+            session.close()
+
+    def _janitor_loop(self):
+        """Periodically close stale open visits (>2h) that the departure checker missed."""
+        # Stagger startup so janitor doesn't race with departure checker at launch
+        self._stop.wait(5 * 60)
+        while not self._stop.is_set():
+            try:
+                self._run_janitor()
+            except Exception as e:
+                logger.error("Visit janitor failed: %s", e)
+            self._stop.wait(15 * 60)
+
+    def _run_janitor(self):
+        """Close visits open longer than 2 hours and evict stale in-memory tracker entries."""
+        from datetime import timedelta
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+        session = get_session()
+        closed = 0
+        try:
+            stale_visits = (
+                session.query(Visit)
+                .filter(
+                    Visit.departed_at.is_(None),
+                    Visit.arrived_at < cutoff,
+                )
+                .all()
+            )
+
+            if not stale_visits:
+                logger.debug("Visit janitor: no stale visits found")
+                return
+
+            now = datetime.now(timezone.utc)
+            for visit in stale_visits:
+                # Use the device's last recorded event as the effective departure time
+                last_event = (
+                    session.query(Event.timestamp)
+                    .filter(Event.device_id == visit.device_id)
+                    .order_by(Event.timestamp.desc())
+                    .first()
+                )
+                departed_at = (last_event[0] if last_event else None) or visit.arrived_at
+                if departed_at.tzinfo is None:
+                    departed_at = departed_at.replace(tzinfo=timezone.utc)
+                arrived = visit.arrived_at
+                if arrived.tzinfo is None:
+                    arrived = arrived.replace(tzinfo=timezone.utc)
+
+                visit.departed_at = departed_at
+                visit.duration_seconds = max(0, int((departed_at - arrived).total_seconds()))
+                closed += 1
+
+                # Evict from in-memory tracker so the device registers as a
+                # fresh arrival the next time it probes, rather than silently
+                # extending the now-closed visit.
+                device = session.get(Device, visit.device_id)
+                if device:
+                    with self.tracker._lock:
+                        self.tracker.active.pop(device.mac, None)
+
+            session.commit()
+            logger.info("Visit janitor: closed %d stale visit(s) (arrived before %s)",
+                        closed, cutoff.strftime("%H:%M UTC"))
+        except Exception:
+            session.rollback()
+            raise
         finally:
             session.close()
 

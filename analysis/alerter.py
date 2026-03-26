@@ -2,8 +2,8 @@
 
 Three-tier threat model — no alert fatigue.
 
-  GREEN  — log only. New devices, brief passes, known devices.
-  YELLOW — internal flag, no Telegram. Repeat unknowns, dwell,
+  GREEN  — log only (delivered=False). New devices, brief passes, known devices.
+  YELLOW — Telegram (no snapshot). Repeat unknowns, dwell,
            person+unknown RF correlation.
   RED    — Telegram + Frigate snapshot. Flagged returns, persistent
            unknowns, pattern anomalies, night gate activity.
@@ -279,7 +279,7 @@ def format_alert(level: ThreatLevel, alert_type: str, device=None,
 # ---------------------------------------------------------------------------
 
 class ThreatAlerter:
-    """Routes alerts by threat level: GREEN->log, YELLOW->flag, RED->Telegram."""
+    """Routes alerts by threat level: GREEN->log, YELLOW->Telegram, RED->Telegram+snapshot."""
 
     API_BASE = "https://api.telegram.org/bot{token}"
 
@@ -322,20 +322,52 @@ class ThreatAlerter:
         mac = _dev(device, "mac", "unknown")
         message = format_alert(level, alert_type, device, tag, camera, details)
 
-        # ── GREEN: log only ──
+        # ── GREEN: log only, never delivered to Telegram ──
         if level == ThreatLevel.GREEN:
             logger.debug("GREEN %s: %s", alert_type, mac)
             self._log_alert(level, alert_type, device, message,
-                            channel="log", delivered=True)
+                            channel="log", delivered=False)
             return "logged"
 
-        # ── YELLOW: internal flag, no Telegram ──
+        # ── YELLOW: Telegram (no snapshot) + log ──
         if level == ThreatLevel.YELLOW:
             logger.info("YELLOW %s: %s | %s",
                         alert_type, mac, details.get("reason", ""))
+
+            cooldown_key = f"{alert_type}:{mac}"
+            if not self.cooldown.can_alert(cooldown_key):
+                logger.info("YELLOW suppressed (cooldown): %s %s", alert_type, mac)
+                self._log_alert(level, alert_type, device, message,
+                                channel="telegram", delivered=False, error="cooldown")
+                return "suppressed"
+
+            if not self.tg_enabled:
+                logger.info("YELLOW [telegram disabled]: %s %s", alert_type, mac)
+                self._log_alert(level, alert_type, device, message,
+                                channel="telegram", delivered=False,
+                                error="telegram_disabled")
+                return "flagged"
+
+            if not self.rate_limiter.wait(timeout=15):
+                logger.warning("YELLOW rate-limited: %s", alert_type)
+                self._log_alert(level, alert_type, device, message,
+                                channel="telegram", delivered=False,
+                                error="rate_limited")
+                return "suppressed"
+
+            sent = False
+            error = None
+            try:
+                sent = self._send_message(message)
+            except Exception as e:
+                error = str(e)
+                logger.error("Telegram YELLOW send failed: %s", e)
+
             self._log_alert(level, alert_type, device, message,
-                            channel="internal", delivered=True)
-            return "flagged"
+                            channel="telegram", delivered=sent, error=error)
+            if sent:
+                logger.info("YELLOW sent via Telegram: %s for %s", alert_type, mac)
+            return "sent" if sent else "suppressed"
 
         # ── RED: Telegram + snapshot ──
         logger.warning("RED %s: %s | %s",

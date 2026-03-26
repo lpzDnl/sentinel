@@ -1,0 +1,910 @@
+{% extends "base.html" %}
+{% block title %} — PATTERNS{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── PATTERNS page ──────────────────────────────────── */
+.pat-wrap { padding: 0.8rem 1.2rem 2rem; max-width: 1600px; margin: 0 auto; }
+
+/* ── Section chrome ── */
+.pat-sec {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: 1rem; overflow: hidden;
+}
+.pat-sec-hdr {
+  display: flex; align-items: center; gap: 0.8rem;
+  padding: 0.6rem 0.9rem; cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  user-select: none; transition: background 0.1s;
+}
+.pat-sec-hdr:hover { background: var(--bg-hover); }
+.pat-sec-title {
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+.pat-sec-sub {
+  font-size: 0.7rem; color: var(--text-muted);
+}
+.pat-sec-meta {
+  margin-left: auto; display: flex; align-items: center; gap: 0.7rem;
+}
+.pat-sec-toggle { font-size: 0.65rem; color: var(--text-muted); transition: transform 0.15s; }
+.pat-sec-body { padding: 0.8rem 0.9rem; }
+.pat-sec-body.collapsed { display: none; }
+.pat-sec-hdr.collapsed .pat-sec-toggle { transform: rotate(-90deg); }
+
+/* Loading states */
+.pat-loading {
+  text-align: center; padding: 1.5rem; color: var(--text-muted); font-size: 0.8rem;
+}
+.pat-spinner {
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid var(--border); border-top-color: #e6a817;
+  border-radius: 50%; animation: pat-spin 0.7s linear infinite;
+  margin-right: 0.5rem; vertical-align: middle;
+}
+@keyframes pat-spin { to { transform: rotate(360deg); } }
+
+/* ── Section 1: Environment Rhythm ── */
+.pat-s1-title { color: #00c8dc; }
+
+/* Heatmap */
+.hm-wrap { overflow-x: auto; margin-bottom: 0.8rem; }
+.hm-table { border-collapse: collapse; font-size: 0.62rem; }
+.hm-table td, .hm-table th {
+  width: 34px; min-width: 34px; height: 30px;
+  text-align: center; vertical-align: middle;
+  border: 1px solid rgba(48,54,61,0.6);
+}
+.hm-table th { color: var(--text-muted); font-weight: 400; background: var(--bg); width: 28px; min-width: 28px; }
+.hm-day-label { color: var(--text-muted); font-size: 0.62rem; text-align: right; padding-right: 6px; white-space: nowrap; }
+.hm-cell { cursor: default; position: relative; }
+.hm-cell:hover::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+  background: var(--bg-card); border: 1px solid var(--border-hi);
+  color: var(--text); font-size: 0.65rem; padding: 3px 7px;
+  border-radius: 3px; white-space: nowrap; z-index: 99; pointer-events: none;
+}
+
+/* Insights pills */
+.pat-insights { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+.pat-insight-pill {
+  font-size: 0.7rem; padding: 0.25rem 0.8rem; border-radius: 20px;
+  background: rgba(0,200,220,0.08); color: #00c8dc;
+  border: 1px solid rgba(0,200,220,0.2);
+}
+.pat-today-ratio {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 0.7rem; color: var(--text-dim);
+  background: var(--bg); border: 1px solid var(--border);
+  padding: 0.25rem 0.8rem; border-radius: 20px;
+}
+.ptr-value { font-weight: 700; }
+.ptr-above { color: var(--red); }
+.ptr-normal { color: var(--green); }
+.ptr-below  { color: var(--blue); }
+
+/* Multi-line chart */
+.pat-chart-wrap {
+  position: relative; height: 160px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0.5rem;
+}
+.pat-chart-title {
+  font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.3rem;
+  letter-spacing: 0.8px; text-transform: uppercase;
+}
+.pat-chart-legend {
+  display: flex; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 0.5rem;
+  font-size: 0.62rem;
+}
+.pat-legend-item { display: flex; align-items: center; gap: 0.3rem; }
+.pat-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Section 2: Recurring Unknowns ── */
+.pat-s2-title { color: #e6a817; }
+
+.pat-rank-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.pat-rank-table th {
+  text-align: left; padding: 0.35rem 0.6rem;
+  font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.8px; border-bottom: 1px solid var(--border);
+  background: var(--bg); white-space: nowrap;
+}
+.pat-rank-table td {
+  padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.pat-rank-table tr:last-child td { border-bottom: none; }
+.pat-rank-table tr:hover td { background: var(--bg-hover); }
+
+.pat-rank-num { color: var(--amber); font-weight: 700; font-size: 0.8rem; min-width: 24px; }
+.pat-rank-mac { font-family: var(--font-mono); font-weight: 600; }
+.days-3-4 { color: var(--amber); }
+.days-5-6 { color: var(--orange); }
+.days-7p  { color: var(--red); }
+.days-dim { color: var(--text-dim); }
+
+.pat-score-bar-wrap {
+  width: 80px; height: 6px; background: var(--border);
+  border-radius: 3px; overflow: hidden; display: inline-block;
+  vertical-align: middle; margin-right: 0.4rem;
+}
+.pat-score-bar { height: 100%; background: var(--amber); border-radius: 3px; }
+
+.pat-ssid-badges { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+.pat-ssid-b {
+  font-size: 0.6rem; padding: 0.08rem 0.35rem; border-radius: 3px;
+  background: rgba(88,166,255,0.1); color: var(--blue);
+  border: 1px solid rgba(88,166,255,0.2); white-space: nowrap;
+}
+
+/* Inline tag dropdown */
+.pat-tag-form { display: flex; gap: 0.3rem; align-items: center; }
+.pat-tag-sel {
+  font-size: 0.65rem; padding: 0.15rem 0.3rem; background: var(--bg-input);
+  border: 1px solid var(--border); color: var(--text-dim); border-radius: 3px;
+  font-family: var(--font-mono); cursor: pointer; width: auto; min-width: 80px;
+}
+.pat-tag-sel:focus { border-color: var(--amber-dim); outline: none; }
+.pat-tag-btn {
+  font-size: 0.62rem; padding: 0.12rem 0.4rem; cursor: pointer;
+  background: rgba(230,168,23,0.1); border: 1px solid rgba(230,168,23,0.3);
+  color: var(--amber); border-radius: 3px; font-family: var(--font-mono);
+}
+.pat-tag-btn:hover { background: rgba(230,168,23,0.18); }
+
+/* ── Section 3: Vehicle Clusters ── */
+.pat-s3-title { color: #00c8dc; }
+
+.pat-subsec-hdr {
+  font-size: 0.65rem; font-weight: 700; letter-spacing: 1.5px;
+  text-transform: uppercase; padding: 0.35rem 0;
+  margin-bottom: 0.5rem; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 0.5rem;
+}
+.pat-subsec-hdr.ghost-hdr { color: var(--red); }
+.pat-subsec-hdr.known-hdr { color: #00c8dc; }
+
+.pat-veh-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 0.6rem; margin-bottom: 1rem;
+}
+.pat-veh-card {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0.6rem 0.75rem; overflow: hidden;
+}
+.pat-veh-card:hover { border-color: var(--border-hi); }
+.pat-veh-card-hdr {
+  display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+.pat-veh-sensor { color: #00c8dc; font-weight: 600; font-size: 0.78rem; }
+.pat-veh-model { font-size: 0.68rem; padding: 0.1rem 0.4rem; border-radius: 3px; background: rgba(0,200,220,0.08); color: #00c8dc; border: 1px solid rgba(0,200,220,0.2); }
+.pat-veh-stats {
+  font-size: 0.68rem; color: var(--text-muted); display: flex; gap: 0.8rem;
+  flex-wrap: wrap; margin-bottom: 0.4rem;
+}
+.pat-veh-stats span b { color: var(--text); font-weight: 600; }
+
+.pat-ssid-row { display: flex; gap: 0.25rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
+.pat-veh-ssid {
+  font-size: 0.62rem; padding: 0.08rem 0.4rem; border-radius: 3px;
+  background: rgba(0,200,220,0.07); color: #00c8dc;
+  border: 1px solid rgba(0,200,220,0.18); white-space: nowrap;
+}
+.pat-veh-bt {
+  font-size: 0.62rem; padding: 0.08rem 0.4rem; border-radius: 3px;
+  background: rgba(188,140,255,0.07); color: var(--purple);
+  border: 1px solid rgba(188,140,255,0.18); white-space: nowrap;
+}
+.pat-veh-cam {
+  font-size: 0.62rem; padding: 0.08rem 0.4rem; border-radius: 3px;
+  background: rgba(188,140,255,0.07); color: var(--purple);
+  border: 1px solid rgba(188,140,255,0.18);
+}
+
+.pat-sparkline-wrap {
+  height: 44px; position: relative; margin-top: 0.5rem;
+  cursor: pointer; overflow: hidden;
+}
+.pat-sparkline-ph {
+  height: 44px; border: 1px dashed var(--border); border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.62rem; color: var(--text-muted); cursor: pointer;
+}
+.pat-sparkline-ph:hover { border-color: var(--border-hi); color: var(--text-dim); }
+
+.pat-same-person {
+  font-size: 0.68rem; color: var(--yellow); margin-top: 0.4rem;
+  display: flex; align-items: center; gap: 0.3rem;
+}
+
+/* Ghost table */
+.pat-ghost-table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+.pat-ghost-table th {
+  font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.8px; padding: 0.3rem 0.6rem; border-bottom: 1px solid var(--border);
+  text-align: left; background: var(--bg);
+}
+.pat-ghost-table td { padding: 0.38rem 0.6rem; border-bottom: 1px solid var(--border); }
+.pat-ghost-table tr:last-child td { border-bottom: none; }
+.pat-ghost-table tr:hover td { background: var(--bg-hover); }
+.pat-ghost-sensor { color: var(--red); font-weight: 600; font-family: var(--font-mono); font-size: 0.74rem; }
+
+/* ── Section 4: Anomaly Log ── */
+.pat-s4-title { color: var(--red); }
+
+.pat-anomaly-feed { display: flex; flex-direction: column; gap: 0; }
+.pat-anomaly-row {
+  display: flex; align-items: flex-start; gap: 0.7rem;
+  padding: 0.5rem 0; border-bottom: 1px solid var(--border);
+  font-size: 0.76rem;
+}
+.pat-anomaly-row:last-child { border-bottom: none; }
+.pa-time { color: var(--text-muted); font-size: 0.68rem; white-space: nowrap; min-width: 90px; font-variant-numeric: tabular-nums; }
+.pa-badge { white-space: nowrap; min-width: 130px; }
+.pa-desc { flex: 1; color: var(--text-dim); }
+.pa-link { white-space: nowrap; }
+
+/* Anomaly type badge colors */
+.ab-spike   { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+.ab-dead    { background: rgba(88,166,255,0.12); color: var(--blue); border: 1px solid rgba(88,166,255,0.25); }
+.ab-persist { background: rgba(230,168,23,0.12); color: var(--amber); border: 1px solid rgba(230,168,23,0.25); }
+.ab-ghost   { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+.ab-night   { background: rgba(188,140,255,0.12); color: var(--purple); border: 1px solid rgba(188,140,255,0.25); }
+.ab-pattern { background: rgba(210,153,34,0.12); color: var(--yellow); border: 1px solid rgba(210,153,34,0.25); }
+
+/* Same-person candidates */
+.pat-same-person-list { margin-top: 0.8rem; }
+.pat-sp-hdr {
+  font-size: 0.62rem; color: var(--yellow); letter-spacing: 1.2px;
+  text-transform: uppercase; margin-bottom: 0.4rem; font-weight: 600;
+}
+.pat-sp-row {
+  display: flex; align-items: center; gap: 0.6rem; padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border); font-size: 0.72rem;
+}
+.pat-sp-row:last-child { border-bottom: none; }
+.pat-sp-sensor { color: #00c8dc; font-family: var(--font-mono); font-weight: 600; }
+.pat-sp-ssids { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pat-wrap">
+
+<!-- ── Section 1: Environment Rhythm ── -->
+<div class="pat-sec" id="pat-s1">
+  <div class="pat-sec-hdr" onclick="toggleSection('s1')">
+    <span class="pat-sec-title pat-s1-title">&#x25A0; ENVIRONMENT RHYTHM</span>
+    <span class="pat-sec-sub">Activity heatmap · sensor streams · baseline comparison</span>
+    <div class="pat-sec-meta">
+      <span id="s1-today-badge" style="font-size:0.68rem;color:var(--text-muted)">—</span>
+      <span class="pat-sec-toggle">&#x25BC;</span>
+    </div>
+  </div>
+  <div class="pat-sec-body" id="s1-body">
+    <div id="s1-loading" class="pat-loading"><span class="pat-spinner"></span>Loading environment data…</div>
+    <div id="s1-content" style="display:none">
+      <div id="s1-insights" class="pat-insights"></div>
+      <div class="hm-wrap">
+        <div style="font-size:0.62rem;color:var(--text-muted);margin-bottom:0.3rem;letter-spacing:0.8px">FRIGATE_CAR + SDR_TPMS — LAST 14 DAYS</div>
+        <table class="hm-table" id="hm-table"></table>
+      </div>
+      <div style="margin-top:0.8rem">
+        <div class="pat-chart-title">SENSOR STREAMS — LAST 24H vs BASELINE</div>
+        <div class="pat-chart-legend" id="chart-legend"></div>
+        <div style="position:relative;height:140px">
+          <canvas id="sensor-chart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Section 2: Recurring Unknowns ── -->
+<div class="pat-sec" id="pat-s2">
+  <div class="pat-sec-hdr" onclick="toggleSection('s2')">
+    <span class="pat-sec-title pat-s2-title">&#x25CF; RECURRING UNKNOWNS</span>
+    <span class="pat-sec-sub">Unidentified devices by behavioral consistency score</span>
+    <div class="pat-sec-meta">
+      <span id="s2-count-badge" style="font-size:0.68rem;color:var(--text-muted)">—</span>
+      <span class="pat-sec-toggle">&#x25BC;</span>
+    </div>
+  </div>
+  <div class="pat-sec-body" id="s2-body">
+    <div id="s2-loading" class="pat-loading"><span class="pat-spinner"></span>Loading recurring unknowns…</div>
+    <div id="s2-content" style="display:none">
+      <div class="table-wrap">
+        <table class="pat-rank-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Device</th>
+              <th>Score</th>
+              <th>Days</th>
+              <th>Visits</th>
+              <th>Avg Dwell</th>
+              <th>Typical Hours</th>
+              <th>Probe SSIDs</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="s2-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Section 3: Vehicle Identity Clusters ── -->
+<div class="pat-sec" id="pat-s3">
+  <div class="pat-sec-hdr" onclick="toggleSection('s3')">
+    <span class="pat-sec-title pat-s3-title">&#x25A0; VEHICLE IDENTITY CLUSTERS</span>
+    <span class="pat-sec-sub">Known identities · SSID fingerprints · ghost vehicles</span>
+    <div class="pat-sec-meta">
+      <span id="s3-count-badge" style="font-size:0.68rem;color:var(--text-muted)">—</span>
+      <span class="pat-sec-toggle">&#x25BC;</span>
+    </div>
+  </div>
+  <div class="pat-sec-body" id="s3-body">
+    <div id="s3-loading" class="pat-loading"><span class="pat-spinner"></span>Loading vehicle clusters…</div>
+    <div id="s3-content" style="display:none">
+      <div id="s3-known"></div>
+      <div id="s3-ghost"></div>
+      <div id="s3-same-person"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Section 4: Anomaly Log ── -->
+<div class="pat-sec" id="pat-s4">
+  <div class="pat-sec-hdr" onclick="toggleSection('s4')">
+    <span class="pat-sec-title pat-s4-title">&#x26A0; ANOMALY LOG</span>
+    <span class="pat-sec-sub">Detected deviations from baseline — last 7 days</span>
+    <div class="pat-sec-meta">
+      <span id="s4-count-badge" style="font-size:0.68rem;color:var(--text-muted)">—</span>
+      <span class="pat-sec-toggle">&#x25BC;</span>
+    </div>
+  </div>
+  <div class="pat-sec-body" id="s4-body">
+    <div id="s4-loading" class="pat-loading"><span class="pat-spinner"></span>Computing anomalies…</div>
+    <div id="s4-content" style="display:none">
+      <div id="s4-feed" class="pat-anomaly-feed"></div>
+    </div>
+  </div>
+</div>
+
+</div><!-- .pat-wrap -->
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  var TZ_NAME = '{{ config.get("general",{}).get("timezone","UTC") }}';
+  var sensorChart = null;
+  var sparkCharts = {}; // sensor_id → Chart
+
+  /* ── Collapse / restore sections ── */
+  function toggleSection(id) {
+    var body = document.getElementById(id + '-body');
+    var hdr  = document.querySelector('#pat-s' + id.replace('s','') + ' .pat-sec-hdr');
+    if (!body) return;
+    var collapsed = body.classList.toggle('collapsed');
+    if (hdr) hdr.classList.toggle('collapsed', collapsed);
+    try { localStorage.setItem('pat_sec_' + id, collapsed ? '0' : '1'); } catch(e) {}
+  }
+  window.toggleSection = toggleSection;
+
+  // Restore saved states on load
+  ['s1','s2','s3','s4'].forEach(function(id) {
+    try {
+      var stored = localStorage.getItem('pat_sec_' + id);
+      if (stored === '0') {
+        var body = document.getElementById(id + '-body');
+        var hdr  = document.querySelector('#pat-' + id + ' .pat-sec-hdr');
+        if (body) body.classList.add('collapsed');
+        if (hdr)  hdr.classList.add('collapsed');
+      }
+    } catch(e) {}
+  });
+
+  /* ── Utility ── */
+  function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    try {
+      return new Date(iso).toLocaleDateString('en-US', {month:'2-digit',day:'2-digit',year:'2-digit'});
+    } catch(e) { return iso; }
+  }
+  function fmtTimeAgo(iso) {
+    if (!iso) return 'never';
+    var s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s/60) + 'm ago';
+    if (s < 86400) return Math.floor(s/3600) + 'h ago';
+    return Math.floor(s/86400) + 'd ago';
+  }
+  function fmtDT(iso) {
+    if (!iso) return '—';
+    try {
+      return new Date(iso).toLocaleString('en-US',{timeZone:TZ_NAME,hour12:false,month:'2-digit',day:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+    } catch(e) { return iso; }
+  }
+  function show(id)  { var el = document.getElementById(id); if (el) { el.style.display = ''; el.style.removeProperty('display'); } }
+  function hide(id)  { var el = document.getElementById(id); if (el) el.style.display = 'none'; }
+
+  /* ─────────────────────────────────────────────────── */
+  /* SECTION 1 — Environment Rhythm                      */
+  /* ─────────────────────────────────────────────────── */
+  function loadS1() {
+    fetch('/api/patterns/environment')
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        hide('s1-loading');
+        renderHeatmap(d.heatmap, d.heatmap_max);
+        renderInsights(d.insights, d.today_vs_baseline);
+        renderSensorChart(d.hourly_breakdown, d.baseline);
+        show('s1-content');
+      })
+      .catch(function(e) {
+        document.getElementById('s1-loading').innerHTML = '<span style="color:var(--red)">Failed to load</span>';
+      });
+  }
+
+  var DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+  function renderHeatmap(heatmap, heatmap_max) {
+    var table = document.getElementById('hm-table');
+    var html = '<tr><th></th>';
+    // Hour labels
+    for (var h = 0; h < 24; h++) {
+      html += '<th>' + (h < 10 ? '0'+h : h) + '</th>';
+    }
+    html += '</tr>';
+
+    for (var d = 0; d < 7; d++) {
+      html += '<tr><td class="hm-day-label">' + DAY_NAMES[d] + '</td>';
+      for (var h = 0; h < 24; h++) {
+        var v = heatmap[d][h];
+        var alpha = heatmap_max > 0 ? v / heatmap_max : 0;
+        // Color: dark bg → cyan
+        var r = Math.round(0 * (1-alpha) + 0 * alpha);
+        var g = Math.round(17 * (1-alpha) + 200 * alpha);
+        var b = Math.round(23 * (1-alpha) + 220 * alpha);
+        var textAlpha = alpha > 0.5 ? 'rgba(13,17,23,0.9)' : 'rgba(139,148,158,0.8)';
+        var tip = DAY_NAMES[d] + ' ' + (h<10?'0'+h:h) + ':00 — ' + v + ' events';
+        html += '<td class="hm-cell" data-tip="' + esc(tip) + '" '
+          + 'style="background:rgb(' + r + ',' + g + ',' + b + ');color:' + textAlpha + '">'
+          + (v > 0 ? v : '')
+          + '</td>';
+      }
+      html += '</tr>';
+    }
+    table.innerHTML = html;
+  }
+
+  function renderInsights(insights, ratio) {
+    var html = '';
+    (insights || []).forEach(function(ins) {
+      html += '<span class="pat-insight-pill">' + esc(ins) + '</span>';
+    });
+
+    // Today vs baseline pill
+    var ratioClass = ratio > 1.3 ? 'ptr-above' : ratio < 0.7 ? 'ptr-below' : 'ptr-normal';
+    var ratioLabel = ratio > 1.3 ? 'above' : ratio < 0.7 ? 'below' : 'normal';
+    html += '<span class="pat-today-ratio">Today: <span class="ptr-value ' + ratioClass + '">'
+          + (ratio != null ? (ratio * 100).toFixed(0) + '%' : '—') + '</span> of baseline</span>';
+
+    document.getElementById('s1-insights').innerHTML = html;
+
+    // Update header badge
+    var badge = document.getElementById('s1-today-badge');
+    if (badge) {
+      badge.style.color = ratio > 1.3 ? 'var(--red)' : ratio < 0.7 ? 'var(--blue)' : 'var(--green)';
+      badge.textContent = 'today ' + (ratio != null ? (ratio*100).toFixed(0)+'%' : '—') + ' of baseline';
+    }
+  }
+
+  var SENSOR_CONFIG = [
+    { key: 'sdr_tpms',       label: 'SDR TPMS',     color: '#00c8dc', bl_key: 'sdr_tpms' },
+    { key: 'frigate_car',    label: 'Frigate Car',   color: '#f0883e', bl_key: 'frigate_car' },
+    { key: 'frigate_person', label: 'Person',        color: '#bc8cff', bl_key: 'frigate_person' },
+    { key: 'bt',             label: 'BT',            color: '#bc8cff', bl_key: 'bt' },
+  ];
+  // WiFi and weather have very different scales; show them separately or omit
+
+  function renderSensorChart(actual, baseline) {
+    // Normalize to % of baseline peak so all streams are on same axis
+    var labels = [];
+    for (var h = 0; h < 24; h++) labels.push(h < 10 ? '0'+h : ''+h);
+
+    var datasets = [];
+    var legendHtml = '';
+
+    var cfg = [
+      { key:'sdr_tpms', label:'TPMS', color:'#00c8dc' },
+      { key:'frigate_car', label:'Frg Car', color:'#f0883e' },
+      { key:'frigate_person', label:'Person', color:'#bc8cff' },
+    ];
+
+    cfg.forEach(function(c) {
+      var act = actual[c.key] || new Array(24).fill(0);
+      var bl  = baseline[c.key] || new Array(24).fill(0);
+      var mx  = Math.max.apply(null, bl.concat(act)) || 1;
+
+      datasets.push({
+        label: c.label,
+        data: act.map(function(v){ return Math.round(v/mx*100); }),
+        borderColor: c.color,
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.3,
+      });
+      // Baseline dashed
+      datasets.push({
+        label: c.label + ' (bl)',
+        data: bl.map(function(v){ return Math.round(v/mx*100); }),
+        borderColor: c.color,
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        tension: 0.3,
+      });
+
+      legendHtml += '<span class="pat-legend-item">'
+        + '<span class="pat-legend-dot" style="background:' + c.color + '"></span>'
+        + '<span style="color:var(--text-dim)">' + c.label + '</span>'
+        + '</span>';
+    });
+
+    document.getElementById('chart-legend').innerHTML = legendHtml
+      + '<span class="pat-legend-item"><span style="font-size:0.6rem;color:var(--text-muted)">Dashed = 6d baseline&nbsp;|&nbsp;Y-axis = % of stream peak</span></span>';
+
+    if (sensorChart) sensorChart.destroy();
+    var ctx = document.getElementById('sensor-chart').getContext('2d');
+    sensorChart = new Chart(ctx, {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        animation: false,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+        scales: {
+          x: { grid: { color: 'rgba(48,54,61,0.5)' }, ticks: { maxTicksLimit: 12, font: { size: 10 } } },
+          y: {
+            grid: { color: 'rgba(48,54,61,0.5)' },
+            ticks: { font: { size: 10 }, callback: function(v){ return v + '%'; }, maxTicksLimit: 5 },
+            min: 0, max: 100,
+          },
+        },
+      },
+    });
+  }
+
+  /* ─────────────────────────────────────────────────── */
+  /* SECTION 2 — Recurring Unknowns                     */
+  /* ─────────────────────────────────────────────────── */
+  function loadS2() {
+    fetch('/api/patterns/recurring-unknowns')
+      .then(function(r){ return r.json(); })
+      .then(function(data) {
+        hide('s2-loading');
+        var badge = document.getElementById('s2-count-badge');
+        if (badge) badge.textContent = data.length + ' devices';
+        renderRecurringUnknowns(data);
+        show('s2-content');
+      })
+      .catch(function() {
+        document.getElementById('s2-loading').innerHTML = '<span style="color:var(--red)">Failed to load</span>';
+      });
+  }
+
+  var maxScore = 0;
+
+  function renderRecurringUnknowns(data) {
+    maxScore = data.reduce(function(m, d){ return Math.max(m, d.consistency_score||0); }, 1);
+    var tbody = document.getElementById('s2-tbody');
+    var html = '';
+
+    data.forEach(function(d, i) {
+      var daysClass = d.days_seen >= 7 ? 'days-7p' : d.days_seen >= 5 ? 'days-5-6' : d.days_seen >= 3 ? 'days-3-4' : 'days-dim';
+      var barPct = maxScore > 0 ? Math.round((d.consistency_score / maxScore) * 100) : 0;
+      var scoreStr = (d.consistency_score || 0).toFixed(0);
+
+      var ssidHtml = '';
+      if (d.probe_ssids && d.probe_ssids.length) {
+        d.probe_ssids.forEach(function(s){
+          ssidHtml += '<span class="pat-ssid-b">' + esc(s) + '</span>';
+        });
+      } else {
+        ssidHtml = '<span style="color:var(--text-muted);font-size:0.62rem">none</span>';
+      }
+
+      html += '<tr>'
+        + '<td class="pat-rank-num">' + (i+1) + '</td>'
+        + '<td><span class="pat-rank-mac ' + daysClass + '">' + esc(d.mac) + '</span>'
+        + (d.vendor ? '<br><span style="font-size:0.67rem;color:var(--text-muted)">' + esc(d.vendor) + '</span>' : '')
+        + (d.is_randomized ? ' <span class="badge badge-dim" style="font-size:0.55rem">RAND</span>' : '')
+        + '</td>'
+        + '<td><div style="display:flex;align-items:center;gap:0.4rem">'
+        + '<div class="pat-score-bar-wrap"><div class="pat-score-bar" style="width:' + barPct + '%"></div></div>'
+        + '<span style="font-size:0.72rem;color:var(--amber)">' + scoreStr + '</span></div></td>'
+        + '<td class="' + daysClass + '">' + d.days_seen + '</td>'
+        + '<td>' + (d.total_visits || 0).toLocaleString() + '</td>'
+        + '<td>' + (d.avg_dwell_minutes ? d.avg_dwell_minutes + 'm' : '—') + '</td>'
+        + '<td style="color:var(--text-dim);font-size:0.7rem">' + esc(d.typical_hours || '—') + '</td>'
+        + '<td><div class="pat-ssid-badges">' + ssidHtml + '</div></td>'
+        + '<td>'
+        + '<div class="pat-tag-form" id="tagform-' + d.id + '">'
+        + '<a href="/investigate?q=' + encodeURIComponent(d.mac) + '" class="btn btn-sm" style="padding:0.12rem 0.4rem;font-size:0.62rem">Investigate</a>'
+        + '<select class="pat-tag-sel" id="tagsel-' + d.id + '">'
+        + '<option value="">tag…</option>'
+        + '<option value="neighbor">neighbor</option>'
+        + '<option value="visitor">visitor</option>'
+        + '<option value="delivery">delivery</option>'
+        + '<option value="ignore">ignore</option>'
+        + '<option value="flagged">flagged</option>'
+        + '</select>'
+        + '<button class="pat-tag-btn" onclick="applyTag(' + d.id + ')">Set</button>'
+        + '</div></td>'
+        + '</tr>';
+    });
+
+    tbody.innerHTML = html || '<tr><td colspan="9" class="empty-state">No recurring unknowns found</td></tr>';
+  }
+
+  function applyTag(devId) {
+    var sel = document.getElementById('tagsel-' + devId);
+    if (!sel || !sel.value) return;
+    fetch('/api/devices/' + devId + '/tag', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ category: sel.value, tagged_by: 'user' }),
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      var form = document.getElementById('tagform-' + devId);
+      if (form) {
+        form.innerHTML = '<span style="color:var(--green);font-size:0.7rem">&#x2713; Tagged: ' + esc(d.category || sel.value) + '</span>';
+      }
+    })
+    .catch(function(){ alert('Tag failed'); });
+  }
+  window.applyTag = applyTag;
+
+  /* ─────────────────────────────────────────────────── */
+  /* SECTION 3 — Vehicle Identity Clusters              */
+  /* ─────────────────────────────────────────────────── */
+  function loadS3() {
+    fetch('/api/patterns/vehicle-clusters')
+      .then(function(r){ return r.json(); })
+      .then(function(data) {
+        hide('s3-loading');
+        var badge = document.getElementById('s3-count-badge');
+        if (badge) badge.textContent = data.known.length + ' known · ' + data.ghost.length + ' ghost';
+        renderVehicleClusters(data);
+        show('s3-content');
+      })
+      .catch(function() {
+        document.getElementById('s3-loading').innerHTML = '<span style="color:var(--red)">Failed to load</span>';
+      });
+  }
+
+  function renderVehicleClusters(data) {
+    // Build same-person map
+    var samePersonMap = {};
+    (data.same_person_candidates || []).forEach(function(sp) {
+      (samePersonMap[sp.vehicle_a] = samePersonMap[sp.vehicle_a] || []).push({other: sp.vehicle_b, ssids: sp.overlap_ssids});
+      (samePersonMap[sp.vehicle_b] = samePersonMap[sp.vehicle_b] || []).push({other: sp.vehicle_a, ssids: sp.overlap_ssids});
+    });
+
+    // Known vehicles
+    var knownHtml = '<div class="pat-subsec-hdr known-hdr">&#x25C6; Known Identities (' + data.known.length + ')</div>';
+    knownHtml += '<div class="pat-veh-grid">';
+    data.known.forEach(function(v) {
+      var c = v.cluster || {};
+      var ssids = c.representative_ssids || [];
+      var bts   = c.associated_bt_vendors || [];
+
+      knownHtml += '<div class="pat-veh-card" id="vc-' + esc(v.sensor_id.replace(/\//g,'-')) + '">';
+      knownHtml += '<div class="pat-veh-card-hdr">';
+      knownHtml += '<span class="pat-veh-sensor">' + esc(v.sensor_id) + '</span>';
+      if (v.model) knownHtml += '<span class="pat-veh-model">' + esc(v.model) + '</span>';
+      if (v.flagged) knownHtml += '<span class="badge badge-red" style="font-size:0.58rem">FLAGGED</span>';
+      knownHtml += '</div>';
+
+      knownHtml += '<div class="pat-veh-stats">'
+        + '<span><b>' + (v.sighting_count||0).toLocaleString() + '</b> sightings</span>'
+        + '<span><b>' + (c.bundle_count||0) + '</b> bundles</span>'
+        + (c.camera_appearances ? '<span><b style="color:var(--purple)">' + c.camera_appearances + '</b> on cam</span>' : '')
+        + '<span>' + fmtDate(v.last_seen) + '</span>'
+        + '</div>';
+
+      if (ssids.length) {
+        knownHtml += '<div class="pat-ssid-row">';
+        ssids.slice(0,6).forEach(function(s){ knownHtml += '<span class="pat-veh-ssid">' + esc(s) + '</span>'; });
+        knownHtml += '</div>';
+      }
+      if (bts.length) {
+        knownHtml += '<div class="pat-ssid-row">';
+        bts.forEach(function(b){ knownHtml += '<span class="pat-veh-bt">' + esc(b) + '</span>'; });
+        knownHtml += '</div>';
+      }
+      if (c.dominant_camera) {
+        knownHtml += '<div style="margin-bottom:0.3rem"><span class="pat-veh-cam">&#x1F4F9; ' + esc(c.dominant_camera) + '</span></div>';
+      }
+      if (samePersonMap[v.sensor_id]) {
+        samePersonMap[v.sensor_id].forEach(function(sp) {
+          knownHtml += '<div class="pat-same-person">&#x21D4; possible same driver as '
+            + '<span style="color:#00c8dc">' + esc(sp.other) + '</span>'
+            + ' (' + sp.ssids.slice(0,2).map(function(s){return esc(s);}).join(', ') + ')'
+            + '</div>';
+        });
+      }
+
+      // Sparkline button
+      var safe_id = v.sensor_id.replace(/[^a-zA-Z0-9]/g, '_');
+      knownHtml += '<div id="spark-wrap-' + safe_id + '" class="pat-sparkline-ph" onclick="loadSparkline(this,\'' + esc(v.sensor_id) + '\',\'' + safe_id + '\')">'
+        + '&#x25B6; Load visit pattern</div>';
+
+      knownHtml += '</div>'; // .pat-veh-card
+    });
+    knownHtml += '</div>'; // .pat-veh-grid
+    document.getElementById('s3-known').innerHTML = knownHtml;
+
+    // Ghost vehicles
+    var ghostHtml = '<div class="pat-subsec-hdr ghost-hdr" style="margin-top:0.8rem">&#x25A1; Ghost Vehicles — no WiFi correlation ('
+      + data.ghost.length + ')</div>';
+    if (data.ghost.length) {
+      ghostHtml += '<div class="table-wrap"><table class="pat-ghost-table"><thead><tr>'
+        + '<th>Sensor ID</th><th>Model</th><th>Sightings</th><th>First Seen</th><th>Last Seen</th><th>Avg RSSI</th><th></th>'
+        + '</tr></thead><tbody>';
+      data.ghost.forEach(function(v) {
+        ghostHtml += '<tr>'
+          + '<td class="pat-ghost-sensor">' + esc(v.sensor_id) + '</td>'
+          + '<td>' + esc(v.model || '—') + '</td>'
+          + '<td style="color:var(--red)">' + (v.sighting_count||0).toLocaleString() + '</td>'
+          + '<td style="color:var(--text-muted)">' + fmtDate(v.first_seen) + '</td>'
+          + '<td>' + fmtTimeAgo(v.last_seen) + '</td>'
+          + '<td style="color:var(--text-muted)">' + (v.avg_rssi != null ? v.avg_rssi.toFixed(1) + ' dBm' : '—') + '</td>'
+          + '<td><a href="/investigate?q=' + encodeURIComponent(v.sensor_id) + '" class="btn btn-sm" style="font-size:0.62rem;padding:0.12rem 0.4rem">Investigate</a></td>'
+          + '</tr>';
+      });
+      ghostHtml += '</tbody></table></div>';
+    } else {
+      ghostHtml += '<div style="color:var(--text-muted);font-size:0.78rem;padding:0.5rem 0">No ghost vehicles found</div>';
+    }
+    document.getElementById('s3-ghost').innerHTML = ghostHtml;
+
+    // Same-person candidates
+    var spHtml = '';
+    if (data.same_person_candidates && data.same_person_candidates.length) {
+      spHtml += '<div class="pat-same-person-list"><div class="pat-sp-hdr">&#x21D4; POSSIBLE SAME DRIVER — VEHICLE PAIRS</div>';
+      data.same_person_candidates.forEach(function(sp) {
+        spHtml += '<div class="pat-sp-row">'
+          + '<span class="pat-sp-sensor">' + esc(sp.vehicle_a) + '</span>'
+          + '<span style="color:var(--text-muted)">↔</span>'
+          + '<span class="pat-sp-sensor">' + esc(sp.vehicle_b) + '</span>'
+          + '<div class="pat-sp-ssids">';
+        (sp.overlap_ssids || []).forEach(function(s) {
+          spHtml += '<span class="pat-veh-ssid">' + esc(s) + '</span>';
+        });
+        spHtml += '</div><span style="font-size:0.65rem;color:var(--text-muted)">overlap=' + (sp.overlap_score||0) + '</span></div>';
+      });
+      spHtml += '</div>';
+    }
+    document.getElementById('s3-same-person').innerHTML = spHtml;
+  }
+
+  function loadSparkline(el, sensorId, safeId) {
+    el.innerHTML = '<span class="pat-spinner"></span>';
+    var encoded = encodeURIComponent(sensorId);
+    fetch('/api/vehicles/' + encoded + '/timeline')
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        // Replace placeholder with canvas
+        var wrap = document.getElementById('spark-wrap-' + safeId);
+        if (!wrap) return;
+        wrap.className = 'pat-sparkline-wrap';
+        wrap.onclick = null;
+        wrap.innerHTML = '<canvas id="sc-' + safeId + '" style="width:100%;height:44px"></canvas>';
+        var ctx = document.getElementById('sc-' + safeId).getContext('2d');
+        if (sparkCharts[safeId]) sparkCharts[safeId].destroy();
+        sparkCharts[safeId] = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: Array.from({length:24}, function(_,i){ return i<10?'0'+i:''+i; }),
+            datasets: [{
+              data: d.hourly || new Array(24).fill(0),
+              backgroundColor: 'rgba(0,200,220,0.35)',
+              borderColor: '#00c8dc',
+              borderWidth: 1,
+            }],
+          },
+          options: {
+            animation: false, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { display: false },
+              y: { display: false, min: 0 },
+            },
+          },
+        });
+      })
+      .catch(function() {
+        var wrap = document.getElementById('spark-wrap-' + safeId);
+        if (wrap) wrap.innerHTML = '<span style="color:var(--text-muted);font-size:0.65rem">No data</span>';
+      });
+  }
+  window.loadSparkline = loadSparkline;
+
+  /* ─────────────────────────────────────────────────── */
+  /* SECTION 4 — Anomaly Log                             */
+  /* ─────────────────────────────────────────────────── */
+  function loadS4() {
+    fetch('/api/patterns/anomalies')
+      .then(function(r){ return r.json(); })
+      .then(function(data) {
+        hide('s4-loading');
+        var badge = document.getElementById('s4-count-badge');
+        if (badge) badge.textContent = data.length + ' anomalies';
+        renderAnomalies(data);
+        show('s4-content');
+      })
+      .catch(function() {
+        document.getElementById('s4-loading').innerHTML = '<span style="color:var(--red)">Failed to load</span>';
+      });
+  }
+
+  var ANOMALY_TYPES = {
+    'ACTIVITY_SPIKE': { label: 'ACTIVITY SPIKE', cls: 'ab-spike' },
+    'DEAD_ZONE':      { label: 'DEAD ZONE',       cls: 'ab-dead' },
+    'NEW_PERSISTENT': { label: 'NEW PERSISTENT',  cls: 'ab-persist' },
+    'GHOST_ARRIVAL':  { label: 'GHOST ARRIVAL',   cls: 'ab-ghost' },
+    'NIGHT_UNKNOWN':  { label: 'NIGHT UNKNOWN',   cls: 'ab-night' },
+    'PATTERN_BREAK':  { label: 'PATTERN BREAK',   cls: 'ab-pattern' },
+  };
+
+  function renderAnomalies(data) {
+    var feed = document.getElementById('s4-feed');
+    if (!data.length) {
+      feed.innerHTML = '<div class="empty-state" style="padding:2rem">No anomalies detected in the last 7 days</div>';
+      return;
+    }
+    var html = '';
+    data.forEach(function(a) {
+      var tc = ANOMALY_TYPES[a.type] || {label: a.type, cls: 'ab-pattern'};
+      var linkHtml = '';
+      if (a.entity_type === 'device' && a.entity_id) {
+        linkHtml = '<a href="/devices/' + a.entity_id + '" class="btn btn-sm" style="font-size:0.62rem;padding:0.12rem 0.4rem">Device</a>';
+      } else if (a.entity_type === 'device' && a.entity_ref) {
+        linkHtml = '<a href="/investigate?q=' + encodeURIComponent(a.entity_ref) + '" class="btn btn-sm" style="font-size:0.62rem;padding:0.12rem 0.4rem">Investigate</a>';
+      } else if ((a.entity_type === 'vehicle') && a.entity_ref) {
+        linkHtml = '<a href="/investigate?q=' + encodeURIComponent(a.entity_ref) + '" class="btn btn-sm" style="font-size:0.62rem;padding:0.12rem 0.4rem">Vehicles</a>';
+      }
+      html += '<div class="pat-anomaly-row">'
+        + '<span class="pa-time">' + fmtDT(a.timestamp) + '</span>'
+        + '<span class="pa-badge"><span class="badge ' + tc.cls + '">' + tc.label + '</span></span>'
+        + '<span class="pa-desc">' + esc(a.description) + '</span>'
+        + (linkHtml ? '<span class="pa-link">' + linkHtml + '</span>' : '')
+        + '</div>';
+    });
+    feed.innerHTML = html;
+  }
+
+  /* ── Boot ── */
+  loadS1();
+  loadS2();
+  loadS3();
+  loadS4();
+
+})();
+</script>
+{% endblock %}

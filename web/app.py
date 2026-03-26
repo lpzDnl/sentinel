@@ -12,6 +12,7 @@ Run as service:  systemctl start sentinel-web
 import json
 import logging
 import signal
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -38,11 +39,13 @@ from database import (
     DroneIdEvent,
     Event,
     FrigateEvent,
+    PresenceBundle,
     ProbeRequest,
     SdrDeviceTag,
     SdrFrigateCorrelation,
     SdrSignal,
     Tag,
+    VehicleIdentityCluster,
     VehicleProfile,
     Visit,
     get_session,
@@ -1421,6 +1424,1183 @@ def create_app() -> tuple[Flask, SocketIO]:
     @app.route("/snapshots/<path:filename>")
     def serve_snapshot(filename):
         return send_from_directory(snapshot_dir, filename)
+
+    # -- Placeholder pages --
+
+    @app.route("/investigate")
+    def investigate():
+        return render_template("investigate.html")
+
+    @app.route("/api/investigate", methods=["POST"])
+    def api_investigate():
+        from collections import Counter
+        from sqlalchemy import func, distinct as sa_distinct, or_
+
+        data = request.get_json(silent=True) or {}
+        q = (data.get("query") or "").strip()
+        scope = data.get("scope", "all")
+
+        if not q or len(q) < 2:
+            return jsonify({"error": "query too short", "devices": [], "vehicles": [], "signals": [], "alerts": [], "total": 0}), 400
+
+        like = f"%{q}%"
+        session = get_session()
+        results = {"devices": [], "vehicles": [], "signals": [], "alerts": []}
+
+        try:
+            now = datetime.now(timezone.utc)
+
+            if scope in ("all", "devices"):
+                # Device IDs that probed for SSIDs matching the query
+                ssid_device_ids = list(set(
+                    r[0] for r in session.query(ProbeRequest.device_id)
+                    .filter(ProbeRequest.ssid.ilike(like), ProbeRequest.device_id.isnot(None))
+                    .distinct().limit(200).all()
+                ))
+
+                dev_filters = [
+                    Device.mac.ilike(like),
+                    Device.vendor.ilike(like),
+                    Device.alias.ilike(like),
+                    Device.hostname.ilike(like),
+                    Tag.label.ilike(like),
+                ]
+                if ssid_device_ids:
+                    dev_filters.append(Device.id.in_(ssid_device_ids))
+
+                device_rows = (
+                    session.query(Device, Tag)
+                    .outerjoin(Tag, Device.id == Tag.device_id)
+                    .filter(or_(*dev_filters))
+                    .order_by(Device.total_sightings.desc())
+                    .limit(5).all()
+                )
+
+                # Arrival sensor set for ghost checks (done once for batch)
+                arrival_sensors = set(
+                    r[0] for r in session.query(ArrivalEvent.tpms_sensor_id)
+                    .filter(ArrivalEvent.tpms_sensor_id.isnot(None))
+                    .distinct().all()
+                )
+
+                for dev, tag in device_rows:
+                    days_seen = session.query(
+                        func.count(sa_distinct(func.date(Visit.arrived_at)))
+                    ).filter(Visit.device_id == dev.id).scalar() or 0
+
+                    avg_dwell_s = session.query(func.avg(Visit.duration_seconds)).filter(
+                        Visit.device_id == dev.id,
+                        Visit.duration_seconds.isnot(None),
+                    ).scalar()
+                    avg_dwell_min = round(avg_dwell_s / 60.0, 1) if avg_dwell_s else None
+
+                    ssid_rows = (
+                        session.query(ProbeRequest.ssid)
+                        .filter(ProbeRequest.device_id == dev.id,
+                                ProbeRequest.ssid.isnot(None),
+                                ProbeRequest.ssid != "")
+                        .group_by(ProbeRequest.ssid)
+                        .order_by(func.count(ProbeRequest.id).desc())
+                        .limit(5).all()
+                    )
+                    probe_ssids = [r[0] for r in ssid_rows]
+
+                    bl = session.query(Baseline).filter(Baseline.device_id == dev.id).first()
+                    baseline_data = {
+                        "typical_start": bl.typical_start_hour,
+                        "typical_end": bl.typical_end_hour,
+                        "avg_visits_per_day": bl.avg_visits_per_day,
+                    } if bl else None
+
+                    arr = (
+                        session.query(ArrivalEvent.tpms_sensor_id)
+                        .filter(ArrivalEvent.wifi_device_id == dev.id,
+                                ArrivalEvent.tpms_sensor_id.isnot(None))
+                        .order_by(ArrivalEvent.timestamp.desc()).first()
+                    )
+                    correlated_vehicle = arr[0] if arr else None
+
+                    frigate_count = session.query(func.count(FrigateEvent.id)).filter(
+                        FrigateEvent.correlated_device_id == dev.id
+                    ).scalar() or 0
+
+                    last_alert = (
+                        session.query(AlertLog.alert_type)
+                        .filter(AlertLog.device_id == dev.id)
+                        .order_by(AlertLog.timestamp.desc()).first()
+                    )
+                    threat_level = None
+                    if last_alert:
+                        at = last_alert[0] or ""
+                        threat_level = "red" if at.startswith("red:") else ("yellow" if at.startswith("yellow:") else None)
+
+                    results["devices"].append({
+                        "type": "device",
+                        "id": dev.id,
+                        "mac": dev.mac,
+                        "device_type": dev.device_type,
+                        "vendor": dev.vendor,
+                        "alias": dev.alias,
+                        "category": tag.category if tag else "unknown",
+                        "tag_label": tag.label if tag else None,
+                        "flagged": tag.flagged if tag else False,
+                        "is_randomized": dev.is_randomized,
+                        "total_sightings": dev.total_sightings,
+                        "first_seen": dev.first_seen.isoformat() if dev.first_seen else None,
+                        "last_seen": dev.last_seen.isoformat() if dev.last_seen else None,
+                        "days_seen": days_seen,
+                        "avg_dwell_minutes": avg_dwell_min,
+                        "probe_ssids": probe_ssids,
+                        "baseline": baseline_data,
+                        "correlated_vehicle": correlated_vehicle,
+                        "frigate_appearances": frigate_count,
+                        "threat_level": threat_level,
+                    })
+
+            if scope in ("all", "vehicles"):
+                veh_rows = (
+                    session.query(VehicleProfile)
+                    .filter(or_(
+                        VehicleProfile.sensor_id.ilike(like),
+                        VehicleProfile.model.ilike(like),
+                        VehicleProfile.notes.ilike(like),
+                    ))
+                    .order_by(VehicleProfile.sighting_count.desc())
+                    .limit(5).all()
+                )
+
+                arrival_sensors = set(
+                    r[0] for r in session.query(ArrivalEvent.tpms_sensor_id)
+                    .filter(ArrivalEvent.tpms_sensor_id.isnot(None))
+                    .distinct().all()
+                )
+
+                for vp in veh_rows:
+                    cluster = (
+                        session.query(VehicleIdentityCluster)
+                        .filter(VehicleIdentityCluster.tpms_sensor_id == vp.sensor_id).first()
+                    )
+                    identity_cluster = None
+                    if cluster:
+                        identity_cluster = {
+                            "representative_ssids": json.loads(cluster.representative_ssids or "[]"),
+                            "associated_bt_vendors": json.loads(cluster.associated_bt_vendors or "[]"),
+                            "camera_appearances": cluster.camera_appearances,
+                            "dominant_camera": cluster.dominant_camera,
+                            "bundle_count": cluster.bundle_count,
+                        }
+                    results["vehicles"].append({
+                        "type": "vehicle",
+                        "sensor_id": vp.sensor_id,
+                        "model": vp.model,
+                        "sighting_count": vp.sighting_count,
+                        "first_seen": vp.first_seen.isoformat() if vp.first_seen else None,
+                        "last_seen": vp.last_seen.isoformat() if vp.last_seen else None,
+                        "flagged": vp.flagged,
+                        "avg_rssi": vp.avg_rssi,
+                        "identity_cluster": identity_cluster,
+                        "ghost": (vp.sighting_count > 20 and vp.sensor_id not in arrival_sensors),
+                    })
+
+            if scope in ("all", "signals"):
+                sig_rows = (
+                    session.query(
+                        SdrSignal.device_uid,
+                        SdrSignal.model,
+                        SdrSignal.signal_class,
+                        func.count(SdrSignal.id).label("cnt"),
+                        func.min(SdrSignal.timestamp).label("first_seen"),
+                        func.max(SdrSignal.timestamp).label("last_seen"),
+                        func.avg(SdrSignal.rssi).label("avg_rssi"),
+                    )
+                    .filter(or_(
+                        SdrSignal.model.ilike(like),
+                        SdrSignal.device_uid.ilike(like),
+                        SdrSignal.signal_class.ilike(like),
+                    ))
+                    .group_by(SdrSignal.device_uid, SdrSignal.model, SdrSignal.signal_class)
+                    .order_by(func.count(SdrSignal.id).desc())
+                    .limit(5).all()
+                )
+                for row in sig_rows:
+                    results["signals"].append({
+                        "type": "signal",
+                        "device_uid": row.device_uid,
+                        "model": row.model,
+                        "signal_class": row.signal_class,
+                        "count": row.cnt,
+                        "first_seen": row.first_seen.isoformat() if row.first_seen else None,
+                        "last_seen": row.last_seen.isoformat() if row.last_seen else None,
+                        "avg_rssi": round(row.avg_rssi, 1) if row.avg_rssi else None,
+                    })
+
+            if scope == "all":
+                alert_rows = (
+                    session.query(AlertLog)
+                    .filter(AlertLog.message.ilike(like))
+                    .order_by(AlertLog.timestamp.desc())
+                    .limit(5).all()
+                )
+                for al in alert_rows:
+                    at = al.alert_type or ""
+                    level = "red" if at.startswith("red:") else ("yellow" if at.startswith("yellow:") else "green")
+                    results["alerts"].append({
+                        "type": "alert",
+                        "id": al.id,
+                        "timestamp": al.timestamp.isoformat() if al.timestamp else None,
+                        "alert_type": al.alert_type,
+                        "level": level,
+                        "device_id": al.device_id,
+                        "message": (al.message or "")[:200],
+                    })
+
+            results["total"] = sum(len(v) for v in results.values())
+            results["query"] = q
+            results["scope"] = scope
+            return jsonify(results)
+
+        finally:
+            session.close()
+
+    @app.route("/api/investigate/connections/<int:device_id>")
+    def api_investigate_connections(device_id):
+        from collections import Counter
+        from sqlalchemy import func
+
+        session = get_session()
+        try:
+            now = datetime.now(timezone.utc)
+            cutoff_14d = (now - timedelta(days=14)).replace(tzinfo=None)
+
+            # Load recent presence bundles and filter Python-side for this device
+            recent_bundles = (
+                session.query(PresenceBundle)
+                .filter(PresenceBundle.timestamp >= cutoff_14d)
+                .order_by(PresenceBundle.timestamp.desc())
+                .limit(500).all()
+            )
+
+            co_device_counter: Counter = Counter()
+            tpms_counter: Counter = Counter()
+
+            for b in recent_bundles:
+                wifi_ids = json.loads(b.wifi_device_ids or "[]")
+                if device_id in wifi_ids:
+                    for did in wifi_ids:
+                        if did != device_id:
+                            co_device_counter[did] += 1
+                    if b.tpms_sensor_id:
+                        tpms_counter[b.tpms_sensor_id] += 1
+
+            # Top 3 co-present devices
+            co_present_devices = []
+            for co_id, appearances in co_device_counter.most_common(3):
+                co_dev = session.get(Device, co_id)
+                if not co_dev:
+                    continue
+                co_tag = session.query(Tag).filter(Tag.device_id == co_id).first()
+                co_present_devices.append({
+                    "type": "device",
+                    "id": co_dev.id,
+                    "mac": co_dev.mac,
+                    "vendor": co_dev.vendor,
+                    "alias": co_dev.alias,
+                    "category": co_tag.category if co_tag else "unknown",
+                    "tag_label": co_tag.label if co_tag else None,
+                    "is_randomized": co_dev.is_randomized,
+                    "total_sightings": co_dev.total_sightings,
+                    "first_seen": co_dev.first_seen.isoformat() if co_dev.first_seen else None,
+                    "last_seen": co_dev.last_seen.isoformat() if co_dev.last_seen else None,
+                    "co_appearances": appearances,
+                })
+
+            # Top co-present vehicle
+            co_present_vehicle = None
+            if tpms_counter:
+                top_sensor, top_count = tpms_counter.most_common(1)[0]
+                vp = session.query(VehicleProfile).filter(VehicleProfile.sensor_id == top_sensor).first()
+                if vp:
+                    cluster = (
+                        session.query(VehicleIdentityCluster)
+                        .filter(VehicleIdentityCluster.tpms_sensor_id == top_sensor).first()
+                    )
+                    arrival_sensors = set(
+                        r[0] for r in session.query(ArrivalEvent.tpms_sensor_id)
+                        .filter(ArrivalEvent.tpms_sensor_id.isnot(None))
+                        .distinct().all()
+                    )
+                    identity_cluster = None
+                    if cluster:
+                        identity_cluster = {
+                            "representative_ssids": json.loads(cluster.representative_ssids or "[]"),
+                            "associated_bt_vendors": json.loads(cluster.associated_bt_vendors or "[]"),
+                            "camera_appearances": cluster.camera_appearances,
+                            "dominant_camera": cluster.dominant_camera,
+                            "bundle_count": cluster.bundle_count,
+                        }
+                    co_present_vehicle = {
+                        "type": "vehicle",
+                        "sensor_id": vp.sensor_id,
+                        "model": vp.model,
+                        "sighting_count": vp.sighting_count,
+                        "first_seen": vp.first_seen.isoformat() if vp.first_seen else None,
+                        "last_seen": vp.last_seen.isoformat() if vp.last_seen else None,
+                        "flagged": vp.flagged,
+                        "avg_rssi": vp.avg_rssi,
+                        "identity_cluster": identity_cluster,
+                        "ghost": (vp.sighting_count > 20 and vp.sensor_id not in arrival_sensors),
+                        "co_appearances": top_count,
+                    }
+
+            # Last 3 alerts for this device
+            alert_rows = (
+                session.query(AlertLog)
+                .filter(AlertLog.device_id == device_id)
+                .order_by(AlertLog.timestamp.desc())
+                .limit(3).all()
+            )
+            alerts = []
+            for al in alert_rows:
+                at = al.alert_type or ""
+                level = "red" if at.startswith("red:") else ("yellow" if at.startswith("yellow:") else "green")
+                alerts.append({
+                    "level": level,
+                    "alert_type": al.alert_type,
+                    "timestamp": al.timestamp.isoformat() if al.timestamp else None,
+                    "message": (al.message or "")[:150],
+                })
+
+            # Visit sparkline: count per day for last 7 days
+            sparkline = []
+            for i in range(7):
+                day_start = (now - timedelta(days=6 - i)).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+                day_end = day_start + timedelta(days=1)
+                cnt = session.query(func.count(Visit.id)).filter(
+                    Visit.device_id == device_id,
+                    Visit.arrived_at >= day_start,
+                    Visit.arrived_at < day_end,
+                ).scalar() or 0
+                sparkline.append(cnt)
+
+            return jsonify({
+                "device_id": device_id,
+                "co_present_devices": co_present_devices,
+                "co_present_vehicle": co_present_vehicle,
+                "alerts": alerts,
+                "visit_sparkline": sparkline,
+            })
+
+        finally:
+            session.close()
+
+    @app.route("/patterns")
+    def patterns():
+        return render_template("patterns.html")
+
+    # ── Patterns API ──────────────────────────────────────────────────────────
+
+    @app.route("/api/patterns/environment")
+    def api_patterns_environment():
+        from sqlalchemy import func
+
+        session = get_session()
+        try:
+            now = datetime.now(timezone.utc)
+            cutoff_14d = now - timedelta(days=14)
+            cutoff_24h = now - timedelta(hours=24)
+
+            bl_path = Path("/opt/sentinel/data/env_baselines.json")
+            bl_data = json.loads(bl_path.read_text()) if bl_path.exists() else {}
+            bl_hourly = bl_data.get("hourly", {})
+            bl_composite = bl_hourly.get("composite_activity", [0] * 24)
+
+            # ── Heatmap 7×24 (composite: frigate_car + sdr_tpms) ──
+            # SQLite strftime '%w': 0=Sun, 1=Mon … 6=Sat → remap to 0=Mon
+            heatmap = [[0] * 24 for _ in range(7)]
+
+            frg_rows = session.query(
+                func.strftime("%w", FrigateEvent.timestamp).label("dow"),
+                func.strftime("%H", FrigateEvent.timestamp).label("hr"),
+                func.count(FrigateEvent.id).label("cnt"),
+            ).filter(
+                FrigateEvent.label == "car",
+                FrigateEvent.timestamp >= cutoff_14d,
+            ).group_by("dow", "hr").all()
+
+            for row in frg_rows:
+                py_dow = (int(row.dow) - 1) % 7
+                heatmap[py_dow][int(row.hr)] += row.cnt
+
+            tpms_rows = session.query(
+                func.strftime("%w", SdrSignal.timestamp).label("dow"),
+                func.strftime("%H", SdrSignal.timestamp).label("hr"),
+                func.count(SdrSignal.id).label("cnt"),
+            ).filter(
+                SdrSignal.signal_class == "tpms",
+                SdrSignal.timestamp >= cutoff_14d,
+            ).group_by("dow", "hr").all()
+
+            for row in tpms_rows:
+                py_dow = (int(row.dow) - 1) % 7
+                heatmap[py_dow][int(row.hr)] += row.cnt
+
+            flat = [v for row in heatmap for v in row]
+            heatmap_max = max(flat) if flat else 1
+
+            # ── Insights ──
+            day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            peak_val, peak_day, peak_hour = 0, 0, 0
+            for d in range(7):
+                for h in range(24):
+                    if heatmap[d][h] > peak_val:
+                        peak_val, peak_day, peak_hour = heatmap[d][h], d, h
+
+            hour_totals = [sum(heatmap[d][h] for d in range(7)) for h in range(24)]
+            min_4h, min_4h_start = float("inf"), 0
+            for h in range(24):
+                s = sum(hour_totals[(h + i) % 24] for i in range(4))
+                if s < min_4h:
+                    min_4h, min_4h_start = s, h
+
+            bl_daily = bl_data.get("daily", {})
+            day_totals = [
+                bl_daily.get("frigate_car", [0] * 7)[i] + bl_daily.get("sdr_tpms", [0] * 7)[i]
+                for i in range(7)
+            ]
+            busiest_idx = day_totals.index(max(day_totals))
+
+            insights = [
+                f"Peak activity: {day_names[peak_day]} {peak_hour:02d}:00 ({peak_val} events over 2 weeks)",
+                f"Quietest 4-hour window: {min_4h_start:02d}:00–{(min_4h_start+4)%24:02d}:00",
+                f"Busiest baseline day: {day_names[busiest_idx]} (~{int(max(day_totals)//6):,} events/day)",
+            ]
+
+            # ── Today vs baseline (composite scale) ──
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_frg_car = session.query(func.count(FrigateEvent.id)).filter(
+                FrigateEvent.label == "car", FrigateEvent.timestamp >= today_start
+            ).scalar() or 0
+            today_tpms = session.query(func.count(SdrSignal.id)).filter(
+                SdrSignal.signal_class == "tpms", SdrSignal.timestamp >= today_start
+            ).scalar() or 0
+            today_frg_person = session.query(func.count(FrigateEvent.id)).filter(
+                FrigateEvent.label == "person", FrigateEvent.timestamp >= today_start
+            ).scalar() or 0
+            today_composite = today_frg_car + today_tpms + today_frg_person * 3
+            baseline_daily_total = sum(bl_composite)
+            today_vs_baseline = round(today_composite / max(baseline_daily_total, 1), 2)
+
+            # ── Hourly breakdown last 24h ──
+            hourly = {k: [0] * 24 for k in ["wifi", "bt", "frigate_car", "frigate_person", "sdr_tpms", "sdr_weather"]}
+
+            wifi_rows = session.query(
+                func.strftime("%H", ProbeRequest.timestamp).label("hr"),
+                func.count(ProbeRequest.id).label("cnt"),
+            ).filter(ProbeRequest.timestamp >= cutoff_24h).group_by("hr").all()
+            for row in wifi_rows:
+                hourly["wifi"][int(row.hr)] = row.cnt
+
+            bt_rows = session.query(
+                func.strftime("%H", Event.timestamp).label("hr"),
+                func.count(Event.id).label("cnt"),
+            ).filter(
+                Event.timestamp >= cutoff_24h,
+                Event.event_type.in_(["bt_ble", "bt_classic"]),
+            ).group_by("hr").all()
+            for row in bt_rows:
+                hourly["bt"][int(row.hr)] = row.cnt
+
+            frg24 = session.query(
+                FrigateEvent.label,
+                func.strftime("%H", FrigateEvent.timestamp).label("hr"),
+                func.count(FrigateEvent.id).label("cnt"),
+            ).filter(
+                FrigateEvent.timestamp >= cutoff_24h,
+                FrigateEvent.label.in_(["car", "person"]),
+            ).group_by(FrigateEvent.label, "hr").all()
+            for row in frg24:
+                k = "frigate_" + row.label
+                if k in hourly:
+                    hourly[k][int(row.hr)] = row.cnt
+
+            sdr24 = session.query(
+                SdrSignal.signal_class,
+                func.strftime("%H", SdrSignal.timestamp).label("hr"),
+                func.count(SdrSignal.id).label("cnt"),
+            ).filter(
+                SdrSignal.timestamp >= cutoff_24h,
+                SdrSignal.signal_class.in_(["tpms", "weather"]),
+            ).group_by(SdrSignal.signal_class, "hr").all()
+            for row in sdr24:
+                k = "sdr_" + row.signal_class
+                if k in hourly:
+                    hourly[k][int(row.hr)] = row.cnt
+
+            return jsonify({
+                "heatmap": heatmap,
+                "heatmap_max": heatmap_max,
+                "insights": insights,
+                "today_vs_baseline": today_vs_baseline,
+                "hourly_breakdown": hourly,
+                "baseline": {
+                    "wifi": bl_hourly.get("wifi_probes", [0] * 24),
+                    "bt": bl_hourly.get("bt_events", [0] * 24),
+                    "frigate_car": bl_hourly.get("frigate_car", [0] * 24),
+                    "frigate_person": bl_hourly.get("frigate_person", [0] * 24),
+                    "sdr_tpms": bl_hourly.get("sdr_tpms", [0] * 24),
+                    "sdr_weather": bl_hourly.get("sdr_weather", [0] * 24),
+                    "composite": bl_composite,
+                },
+            })
+        finally:
+            session.close()
+
+    @app.route("/api/patterns/recurring-unknowns")
+    def api_patterns_recurring_unknowns():
+        from sqlalchemy import func, distinct as sa_distinct
+
+        session = get_session()
+        try:
+            day_subq = (
+                session.query(
+                    Visit.device_id,
+                    func.count(sa_distinct(func.date(Visit.arrived_at))).label("day_count"),
+                    func.count(Visit.id).label("visit_count"),
+                    func.avg(Visit.duration_seconds).label("avg_dur"),
+                )
+                .filter(Visit.arrived_at.isnot(None))
+                .group_by(Visit.device_id)
+                .having(func.count(sa_distinct(func.date(Visit.arrived_at))) >= 3)
+                .subquery()
+            )
+
+            rows = (
+                session.query(Device, Tag, day_subq.c.day_count, day_subq.c.visit_count, day_subq.c.avg_dur)
+                .join(day_subq, Device.id == day_subq.c.device_id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter((Tag.category == "unknown") | (Tag.id.is_(None)))
+                .order_by(day_subq.c.day_count.desc(), day_subq.c.visit_count.desc())
+                .limit(25)
+                .all()
+            )
+
+            result = []
+            for dev, tag, days, visits, avg_dur in rows:
+                avg_vpd = round(visits / max(days, 1), 1)
+                score = days * avg_vpd * 10 * (0.5 if dev.is_randomized else 1.0)
+
+                ssids = [r[0] for r in session.query(ProbeRequest.ssid, func.count(ProbeRequest.id).label("cnt"))
+                    .filter(ProbeRequest.device_id == dev.id, ProbeRequest.ssid.isnot(None), ProbeRequest.ssid != "")
+                    .group_by(ProbeRequest.ssid).order_by(func.count(ProbeRequest.id).desc()).limit(3).all()]
+
+                bl = session.query(Baseline).filter(Baseline.device_id == dev.id).first()
+                typical_hours = None
+                if bl and bl.typical_start_hour is not None and bl.typical_end_hour is not None:
+                    typical_hours = f"{bl.typical_start_hour:02d}:00–{bl.typical_end_hour:02d}:00"
+
+                result.append({
+                    "id": dev.id,
+                    "mac": dev.mac,
+                    "vendor": dev.vendor,
+                    "is_randomized": dev.is_randomized,
+                    "days_seen": days,
+                    "total_visits": visits,
+                    "avg_visits_per_day": avg_vpd,
+                    "avg_dwell_minutes": round(avg_dur / 60.0, 1) if avg_dur else None,
+                    "typical_hours": typical_hours,
+                    "probe_ssids": ssids,
+                    "consistency_score": round(score, 1),
+                    "first_seen": dev.first_seen.isoformat() if dev.first_seen else None,
+                    "last_seen": dev.last_seen.isoformat() if dev.last_seen else None,
+                })
+
+            result.sort(key=lambda x: x["consistency_score"], reverse=True)
+            return jsonify(result[:20])
+        finally:
+            session.close()
+
+    @app.route("/api/patterns/vehicle-clusters")
+    def api_patterns_vehicle_clusters():
+        session = get_session()
+        try:
+            arrival_sensors = set(
+                r[0] for r in session.query(ArrivalEvent.tpms_sensor_id)
+                .filter(ArrivalEvent.tpms_sensor_id.isnot(None)).distinct().all()
+            )
+
+            profiles = session.query(VehicleProfile).order_by(VehicleProfile.sighting_count.desc()).all()
+            known, ghost = [], []
+
+            for vp in profiles:
+                is_ghost = vp.sighting_count > 20 and vp.sensor_id not in arrival_sensors
+                cluster = (
+                    session.query(VehicleIdentityCluster)
+                    .filter(VehicleIdentityCluster.tpms_sensor_id == vp.sensor_id).first()
+                )
+                pd = {
+                    "sensor_id": vp.sensor_id,
+                    "model": vp.model,
+                    "sighting_count": vp.sighting_count,
+                    "first_seen": vp.first_seen.isoformat() if vp.first_seen else None,
+                    "last_seen": vp.last_seen.isoformat() if vp.last_seen else None,
+                    "flagged": vp.flagged,
+                    "avg_rssi": vp.avg_rssi,
+                    "ghost": is_ghost,
+                }
+                if is_ghost:
+                    ghost.append(pd)
+                elif cluster:
+                    pd["cluster"] = {
+                        "representative_ssids": json.loads(cluster.representative_ssids or "[]"),
+                        "associated_bt_vendors": json.loads(cluster.associated_bt_vendors or "[]"),
+                        "bundle_count": cluster.bundle_count,
+                        "camera_appearances": cluster.camera_appearances,
+                        "dominant_camera": cluster.dominant_camera,
+                        "cluster_label": cluster.cluster_label,
+                    }
+                    known.append(pd)
+
+            from analysis.presence_engine import find_same_person_different_vehicle
+            try:
+                same_person = find_same_person_different_vehicle(min_ssid_overlap=2)[:5]
+            except Exception:
+                same_person = []
+
+            return jsonify({
+                "known": known[:20],
+                "ghost": ghost[:20],
+                "same_person_candidates": same_person,
+            })
+        finally:
+            session.close()
+
+    @app.route("/api/patterns/anomalies")
+    def api_patterns_anomalies():
+        from sqlalchemy import func, distinct as sa_distinct
+
+        session = get_session()
+        try:
+            now = datetime.now(timezone.utc)
+            cutoff_7d = now - timedelta(days=7)
+
+            bl_path = Path("/opt/sentinel/data/env_baselines.json")
+            bl_data = json.loads(bl_path.read_text()) if bl_path.exists() else {}
+            bl_composite = bl_data.get("hourly", {}).get("composite_activity", [0] * 24)
+            busy_hours = set(bl_data.get("busy_hours", []))
+
+            anomalies = []
+
+            # ── Activity spike / dead zone ──
+            # Compare hourly (frigate_car + sdr_tpms + person*3) vs composite baseline
+            frg_hourly = session.query(
+                func.strftime("%Y-%m-%d %H", FrigateEvent.timestamp).label("hk"),
+                FrigateEvent.label,
+                func.count(FrigateEvent.id).label("cnt"),
+            ).filter(
+                FrigateEvent.timestamp >= cutoff_7d,
+                FrigateEvent.label.in_(["car", "person"]),
+            ).group_by("hk", FrigateEvent.label).all()
+
+            tpms_hourly = session.query(
+                func.strftime("%Y-%m-%d %H", SdrSignal.timestamp).label("hk"),
+                func.count(SdrSignal.id).label("cnt"),
+            ).filter(
+                SdrSignal.signal_class == "tpms",
+                SdrSignal.timestamp >= cutoff_7d,
+            ).group_by("hk").all()
+
+            hour_actuals: dict = {}
+            for row in frg_hourly:
+                d = hour_actuals.setdefault(row.hk, {"car": 0, "person": 0, "tpms": 0})
+                d[row.label] = row.cnt
+            for row in tpms_hourly:
+                hour_actuals.setdefault(row.hk, {"car": 0, "person": 0, "tpms": 0})["tpms"] = row.cnt
+
+            for hk, counts in hour_actuals.items():
+                try:
+                    dt_naive = datetime.strptime(hk, "%Y-%m-%d %H")
+                except (ValueError, TypeError):
+                    continue
+                h = dt_naive.hour
+                actual = counts["car"] + counts["tpms"] + counts["person"] * 3
+                baseline_val = bl_composite[h] if h < len(bl_composite) else 0
+                if baseline_val <= 0:
+                    continue
+                ratio = actual / baseline_val
+                day_abbr = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][dt_naive.weekday()]
+                if ratio >= 2.0:
+                    anomalies.append({
+                        "timestamp": dt_naive.isoformat(),
+                        "type": "ACTIVITY_SPIKE",
+                        "severity": "high" if ratio >= 3.0 else "medium",
+                        "description": f"Activity {ratio:.1f}× above baseline at {day_abbr} {h:02d}:00 — {actual} vs {baseline_val:.0f} expected",
+                        "entity_id": None, "entity_type": None, "entity_ref": None,
+                    })
+                elif ratio <= 0.25 and h in busy_hours:
+                    anomalies.append({
+                        "timestamp": dt_naive.isoformat(),
+                        "type": "DEAD_ZONE",
+                        "severity": "medium",
+                        "description": f"Dead zone during busy hour {day_abbr} {h:02d}:00 — only {actual} events ({ratio:.0%} of baseline)",
+                        "entity_id": None, "entity_type": None, "entity_ref": None,
+                    })
+
+            # ── Alert log: night unknown / pattern break ──
+            alert_types = ["yellow:night_gate", "yellow:pattern_anomaly", "red:pattern_anomaly",
+                           "yellow:after_hours", "red:after_hours"]
+            alert_rows = (
+                session.query(AlertLog)
+                .filter(AlertLog.timestamp >= cutoff_7d, AlertLog.alert_type.in_(alert_types))
+                .order_by(AlertLog.timestamp.desc()).limit(20).all()
+            )
+            for al in alert_rows:
+                at = al.alert_type or ""
+                atype = "NIGHT_UNKNOWN" if "night" in at else "PATTERN_BREAK"
+                severity = "high" if at.startswith("red:") else "medium"
+                strip = (al.message or "").replace("<b>", "").replace("</b>", "").replace("\n", " ").strip()[:120]
+                anomalies.append({
+                    "timestamp": al.timestamp.isoformat() if al.timestamp else None,
+                    "type": atype, "severity": severity, "description": strip,
+                    "entity_id": al.device_id,
+                    "entity_type": "device" if al.device_id else None,
+                    "entity_ref": None,
+                })
+
+            # ── New persistent unknowns (first seen ≥7d ago, 3+ days) ──
+            persistent_subq = (
+                session.query(
+                    Visit.device_id,
+                    func.count(sa_distinct(func.date(Visit.arrived_at))).label("dc"),
+                )
+                .group_by(Visit.device_id)
+                .having(func.count(sa_distinct(func.date(Visit.arrived_at))) >= 3)
+                .subquery()
+            )
+            new_persist = (
+                session.query(Device, Tag)
+                .join(persistent_subq, Device.id == persistent_subq.c.device_id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter(
+                    Device.first_seen >= cutoff_7d,
+                    (Tag.category == "unknown") | (Tag.id.is_(None)),
+                )
+                .order_by(Device.first_seen.desc()).limit(10).all()
+            )
+            for dev, tag in new_persist:
+                anomalies.append({
+                    "timestamp": dev.first_seen.isoformat() if dev.first_seen else None,
+                    "type": "NEW_PERSISTENT",
+                    "severity": "medium",
+                    "description": f"Unknown device {dev.vendor or dev.mac} reached 3-day threshold — new recurring unknown",
+                    "entity_id": dev.id, "entity_type": "device", "entity_ref": dev.mac,
+                })
+
+            # ── Ghost arrivals ──
+            arrival_sensors = set(
+                r[0] for r in session.query(ArrivalEvent.tpms_sensor_id)
+                .filter(ArrivalEvent.tpms_sensor_id.isnot(None)).distinct().all()
+            )
+            ghost_ids = set(
+                r[0] for r in session.query(VehicleProfile.sensor_id)
+                .filter(VehicleProfile.sighting_count > 20).all()
+                if r[0] not in arrival_sensors
+            )
+            if ghost_ids:
+                ghost_bundles = (
+                    session.query(PresenceBundle)
+                    .filter(
+                        PresenceBundle.timestamp >= cutoff_7d,
+                        PresenceBundle.has_person.is_(True),
+                        PresenceBundle.tpms_sensor_id.in_(list(ghost_ids)[:20]),
+                    )
+                    .order_by(PresenceBundle.timestamp.desc()).limit(10).all()
+                )
+                for b in ghost_bundles:
+                    anomalies.append({
+                        "timestamp": b.timestamp.isoformat() if b.timestamp else None,
+                        "type": "GHOST_ARRIVAL",
+                        "severity": "high",
+                        "description": f"Ghost vehicle {b.tpms_sensor_id} — arrived with camera person, no WiFi correlation ever recorded",
+                        "entity_id": None, "entity_type": "vehicle", "entity_ref": b.tpms_sensor_id,
+                    })
+
+            anomalies.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+            return jsonify(anomalies[:50])
+        finally:
+            session.close()
+
+    @app.route("/settings")
+    def settings():
+        return render_template(
+            "coming_soon.html",
+            page_title="SETTINGS",
+            page_desc="System configuration — sensors, alerts, thresholds",
+        )
+
+    # -- Operations API --
+
+    @app.route("/api/service-status")
+    def api_service_status():
+        """Return systemd active/inactive status for each sentinel service."""
+        services = [
+            "sentinel-wifi",
+            "sentinel-bt",
+            "sentinel-sdr",
+            "sentinel-frigate",
+            "sentinel-droneid",
+            "sentinel-web",
+        ]
+        result = {}
+        for svc in services:
+            try:
+                r = subprocess.run(
+                    ["systemctl", "is-active", svc],
+                    capture_output=True, text=True, timeout=3
+                )
+                result[svc] = r.stdout.strip() or "unknown"
+            except Exception:
+                result[svc] = "unknown"
+        return jsonify(result)
+
+    @app.route("/api/ops-data")
+    def api_ops_data():
+        """Single endpoint returning all data needed for the Operations page."""
+        from collections import defaultdict
+        from sqlalchemy import func, distinct as sa_distinct
+
+        session = get_session()
+        try:
+            now = datetime.now(timezone.utc)
+            active_window = now - timedelta(minutes=10)
+            cutoff_24h   = now - timedelta(hours=24)
+            cutoff_2h    = now - timedelta(hours=2)
+
+            # ── 1. Active devices by tag category ──
+            active_rows = (
+                session.query(Device, Tag)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter(Device.last_seen >= active_window)
+                .all()
+            )
+            by_cat = defaultdict(int)
+            for dev, tag in active_rows:
+                by_cat[tag.category if tag else "unknown"] += 1
+
+            active_devices = {
+                "total":    len(active_rows),
+                "resident": by_cat.get("resident", 0),
+                "neighbor": by_cat.get("neighbor", 0),
+                "unknown":  by_cat.get("unknown", 0),
+            }
+
+            # ── 2. Open visits ──
+            open_visit_rows = (
+                session.query(Visit, Device, Tag)
+                .join(Device, Visit.device_id == Device.id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter(Visit.departed_at.is_(None))
+                .order_by(Visit.arrived_at.asc())
+                .limit(15)
+                .all()
+            )
+            open_visits = []
+            for v, dev, tag in open_visit_rows:
+                arrived = v.arrived_at
+                if arrived and arrived.tzinfo is None:
+                    arrived = arrived.replace(tzinfo=timezone.utc)
+                dwell = int((now - arrived).total_seconds()) if arrived else 0
+                open_visits.append({
+                    "mac":          dev.mac,
+                    "vendor":       dev.vendor,
+                    "alias":        dev.alias,
+                    "device_id":    dev.id,
+                    "tag_category": tag.category if tag else "unknown",
+                    "tag_label":    tag.label if tag else None,
+                    "dwell_seconds": dwell,
+                    "rssi":         v.max_rssi,
+                    "arrived_at":   v.arrived_at.isoformat() if v.arrived_at else None,
+                })
+
+            # ── 3. Recent correlated arrivals ──
+            arr_rows = (
+                session.query(ArrivalEvent, Device, Tag)
+                .outerjoin(Device, ArrivalEvent.wifi_device_id == Device.id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .order_by(ArrivalEvent.timestamp.desc())
+                .limit(5)
+                .all()
+            )
+            recent_arrivals = [
+                {
+                    "timestamp":    arr.timestamp.isoformat() if arr.timestamp else None,
+                    "tpms_model":   arr.tpms_model,
+                    "tpms_sensor_id": arr.tpms_sensor_id,
+                    "confidence":   arr.confidence,
+                    "tpms_rssi":    arr.tpms_rssi,
+                    "wifi_vendor":  dev.vendor if dev else None,
+                    "wifi_mac":     dev.mac if dev else None,
+                    "wifi_device_id": dev.id if dev else None,
+                    "tag_category": tag.category if tag else None,
+                }
+                for arr, dev, tag in arr_rows
+            ]
+
+            # ── 4a. Persistent unknowns: 3+ distinct days, not yet tagged ──
+            day_subq = (
+                session.query(
+                    Visit.device_id,
+                    func.count(sa_distinct(func.date(Visit.arrived_at))).label("day_count"),
+                    func.count(Visit.id).label("visit_count"),
+                )
+                .filter(Visit.arrived_at.isnot(None))
+                .group_by(Visit.device_id)
+                .having(func.count(sa_distinct(func.date(Visit.arrived_at))) >= 3)
+                .subquery()
+            )
+            pers_rows = (
+                session.query(Device, Tag,
+                              day_subq.c.day_count, day_subq.c.visit_count)
+                .join(day_subq, Device.id == day_subq.c.device_id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter((Tag.id.is_(None)) | (Tag.category == "unknown"))
+                .order_by(day_subq.c.day_count.desc())
+                .limit(10)
+                .all()
+            )
+            persistent_unknowns = [
+                {
+                    "device_id":    dev.id,
+                    "mac":          dev.mac,
+                    "vendor":       dev.vendor,
+                    "days_seen":    day_count or 0,
+                    "total_visits": visit_count or 0,
+                    "last_seen":    dev.last_seen.isoformat() if dev.last_seen else None,
+                    "is_randomized": dev.is_randomized,
+                }
+                for dev, tag, day_count, visit_count in pers_rows
+            ]
+
+            # ── 4b. Ghost vehicles: 20+ sightings, never WiFi-correlated ──
+            wifi_sensors = (
+                session.query(ArrivalEvent.tpms_sensor_id)
+                .filter(ArrivalEvent.tpms_sensor_id.isnot(None))
+                .distinct()
+                .subquery()
+            )
+            ghost_rows = (
+                session.query(VehicleProfile)
+                .filter(
+                    VehicleProfile.sighting_count > 20,
+                    ~VehicleProfile.sensor_id.in_(wifi_sensors),
+                )
+                .order_by(VehicleProfile.sighting_count.desc())
+                .limit(10)
+                .all()
+            )
+            ghost_vehicles = [
+                {
+                    "sensor_id":     vp.sensor_id,
+                    "model":         vp.model,
+                    "sighting_count": vp.sighting_count,
+                    "last_seen":     vp.last_seen.isoformat() if vp.last_seen else None,
+                    "avg_rssi":      vp.avg_rssi,
+                }
+                for vp in ghost_rows
+            ]
+
+            # ── 4c. Unreviewed person detections (last 24h) ──
+            person_rows = (
+                session.query(FrigateEvent)
+                .filter(
+                    FrigateEvent.label == "person",
+                    FrigateEvent.correlated_device_id.is_(None),
+                    FrigateEvent.timestamp >= cutoff_24h,
+                )
+                .order_by(FrigateEvent.timestamp.desc())
+                .limit(10)
+                .all()
+            )
+            unreviewed_persons = [
+                {
+                    "id":            fe.id,
+                    "timestamp":     fe.timestamp.isoformat() if fe.timestamp else None,
+                    "camera":        fe.camera,
+                    "confidence":    fe.confidence,
+                    "snapshot_path": fe.snapshot_path.split("/")[-1] if fe.snapshot_path else None,
+                }
+                for fe in person_rows
+            ]
+
+            # ── 4d. Hacker hardware hits (last 24h) ──
+            hacker_rows = (
+                session.query(AlertLog, Device, Tag)
+                .outerjoin(Device, AlertLog.device_id == Device.id)
+                .outerjoin(Tag, Device.id == Tag.device_id)
+                .filter(
+                    AlertLog.timestamp >= cutoff_24h,
+                    AlertLog.alert_type.ilike("%hacker%"),
+                )
+                .order_by(AlertLog.timestamp.desc())
+                .limit(10)
+                .all()
+            )
+            hacker_hits = [
+                {
+                    "timestamp":  al.timestamp.isoformat() if al.timestamp else None,
+                    "alert_type": al.alert_type,
+                    "message":    al.message,
+                    "mac":        dev.mac if dev else None,
+                    "vendor":     dev.vendor if dev else None,
+                    "device_id":  dev.id if dev else None,
+                }
+                for al, dev, tag in hacker_rows
+            ]
+
+            # ── 5. Camera latest (most recent FrigateEvent per camera) ──
+            cam_subq = (
+                session.query(
+                    FrigateEvent.camera,
+                    func.max(FrigateEvent.id).label("max_id"),
+                )
+                .group_by(FrigateEvent.camera)
+                .subquery()
+            )
+            cam_events = (
+                session.query(FrigateEvent)
+                .join(cam_subq, FrigateEvent.id == cam_subq.c.max_id)
+                .all()
+            )
+            camera_latest = {}
+            for fe in cam_events:
+                camera_latest[fe.camera] = {
+                    "label":        fe.label,
+                    "timestamp":    fe.timestamp.isoformat() if fe.timestamp else None,
+                    "snapshot_path": fe.snapshot_path.split("/")[-1] if fe.snapshot_path else None,
+                    "confidence":   fe.confidence,
+                }
+            # Ensure all configured cameras appear
+            for cam in cfg.get("frigate", {}).get(
+                "cameras",
+                ["front_yard_east", "front_yard_west", "east_corridor", "west_corridor"]
+            ):
+                camera_latest.setdefault(cam, None)
+
+            # ── 6. Recent SDR signals ──
+            sdr_rows = (
+                session.query(SdrSignal)
+                .order_by(SdrSignal.timestamp.desc())
+                .limit(5)
+                .all()
+            )
+            sdr_recent = [
+                {
+                    "timestamp":    s.timestamp.isoformat() if s.timestamp else None,
+                    "signal_class": s.signal_class,
+                    "model":        s.model,
+                    "device_uid":   s.device_uid,
+                    "rssi":         s.rssi,
+                    "frequency":    s.frequency,
+                }
+                for s in sdr_rows
+            ]
+
+            # ── 7. Drone events (last 24h) ──
+            drone_rows = (
+                session.query(DroneIdEvent)
+                .filter(DroneIdEvent.timestamp >= cutoff_24h)
+                .order_by(DroneIdEvent.timestamp.desc())
+                .limit(5)
+                .all()
+            )
+            drone_recent = [
+                {
+                    "timestamp":     de.timestamp.isoformat() if de.timestamp else None,
+                    "mac":           de.mac,
+                    "serial_number": de.serial_number,
+                    "drone_lat":     de.drone_lat,
+                    "drone_lon":     de.drone_lon,
+                    "rssi":          de.rssi,
+                }
+                for de in drone_rows
+            ]
+
+            # ── 8. Threat band: RED/YELLOW alerts in last 2h ──
+            threat_rows = (
+                session.query(AlertLog, Device)
+                .outerjoin(Device, AlertLog.device_id == Device.id)
+                .filter(
+                    AlertLog.timestamp >= cutoff_2h,
+                    (AlertLog.alert_type.startswith("red:"))
+                    | (AlertLog.alert_type.startswith("yellow:")),
+                )
+                .order_by(AlertLog.timestamp.desc())
+                .limit(20)
+                .all()
+            )
+            threat_band = []
+            for al, dev in threat_rows:
+                parts = al.alert_type.split(":", 1)
+                threat_band.append({
+                    "level":      parts[0] if len(parts) > 1 else "unknown",
+                    "alert_type": parts[1] if len(parts) > 1 else al.alert_type,
+                    "mac":        dev.mac if dev else None,
+                    "device_id":  dev.id if dev else None,
+                    "timestamp":  al.timestamp.isoformat() if al.timestamp else None,
+                    "message":    al.message,
+                })
+
+            # ── 9. Activity pulse: 24h hourly event counts + env baseline ──
+            hourly_counts = []
+            for h in range(24):
+                h_start = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23 - h)
+                h_end   = h_start + timedelta(hours=1)
+                cnt = session.query(func.count(Event.id)).filter(
+                    Event.timestamp.between(h_start, h_end)
+                ).scalar() or 0
+                hourly_counts.append(cnt)
+
+            # Load baseline from env_baselines.json, compute composite
+            baseline_counts = [0.0] * 24
+            try:
+                bl_path = Path("/opt/sentinel/data/env_baselines.json")
+                if bl_path.exists():
+                    with open(bl_path) as f:
+                        bl_data = json.load(f)
+                    bl_h = bl_data.get("hourly", {})
+                    tpms_h   = bl_h.get("sdr_tpms",       [0] * 24)
+                    car_h    = bl_h.get("frigate_car",     [0] * 24)
+                    person_h = bl_h.get("frigate_person",  [0] * 24)
+                    raw = [tpms_h[i] + car_h[i] + person_h[i] * 3 for i in range(24)]
+                    max_raw    = max(raw) or 1
+                    max_actual = max(hourly_counts) or 1
+                    scale = max_actual / max_raw
+                    baseline_counts = [round(v * scale, 1) for v in raw]
+            except Exception as e:
+                logger.warning("env_baselines load failed: %s", e)
+
+            return jsonify({
+                "active_devices":  active_devices,
+                "open_visits":     open_visits,
+                "recent_arrivals": recent_arrivals,
+                "attention": {
+                    "persistent_unknowns": persistent_unknowns,
+                    "ghost_vehicles":      ghost_vehicles,
+                    "unreviewed_persons":  unreviewed_persons,
+                    "hacker_hits":         hacker_hits,
+                },
+                "camera_latest": camera_latest,
+                "sdr_recent":    sdr_recent,
+                "drone_recent":  drone_recent,
+                "threat_band":   threat_band,
+                "activity_pulse": {
+                    "counts":           hourly_counts,
+                    "baseline":         baseline_counts,
+                    "current_hour_idx": 23,
+                },
+                "generated_at": now.isoformat(),
+            })
+        finally:
+            session.close()
 
     # -- SocketIO --
 

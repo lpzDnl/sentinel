@@ -34,9 +34,12 @@ from database import (
     Visit,
     get_session,
 )
-from analysis.alerter import ThreatLevel, send_alert, _dev
+from analysis.alerter import ThreatLevel, send_alert, _dev, get_alerter, CooldownTracker
 
 logger = logging.getLogger("sentinel.correlation")
+
+# Per-MAC cooldown for hacker hardware alerts (1 hour)
+_hacker_cooldown = CooldownTracker(cooldown_seconds=3600)
 
 
 # ---------------------------------------------------------------------------
@@ -686,6 +689,28 @@ def evaluate_device(device_id: int) -> dict:
     # Auto-tag: probe-pattern rules first, visit-threshold fallback
     probe_tagged = auto_tag_by_probes(device_id)
     results["auto_tagged"] = probe_tagged or (not probe_tagged and auto_tag_device(device_id))
+
+    # Hacker hardware check — runs after probe data is available
+    try:
+        from analysis.hacker_detector import check_device_for_hacker_hardware
+        hw_hit = check_device_for_hacker_hardware(device_id)
+        if hw_hit and hw_hit["score"] >= 80:
+            mac = hw_hit["mac"]
+            if _hacker_cooldown.can_alert(mac):
+                msg = (
+                    f"\U0001f6a8 <b>HACKER HARDWARE DETECTED</b>\n"
+                    f"<code>{mac}</code>  {hw_hit['vendor'] or 'unknown vendor'}\n"
+                    f"Score: {hw_hit['score']}\n"
+                    f"Reasons: {'; '.join(hw_hit['reasons'])}"
+                )
+                get_alerter().send_raw_message(msg, alert_type="hacker_hardware")
+                logger.warning(
+                    "Hacker hardware: %s score=%d  %s",
+                    mac, hw_hit["score"], "; ".join(hw_hit["reasons"]),
+                )
+            results["hacker_hardware"] = hw_hit
+    except Exception as _hw_err:
+        logger.debug("Hacker hardware check error: %s", _hw_err)
 
     # Recompute baseline periodically
     session = get_session()

@@ -33,9 +33,27 @@ from datetime import datetime, timezone
 sys.path.insert(0, "/opt/sentinel")
 
 import config
-from database import SdrSignal, VehicleProfile, get_session, init_db
+from database import PresenceBundle, SdrSignal, VehicleProfile, get_session, init_db
 
 logger = logging.getLogger("sentinel.sdr")
+
+# ---------------------------------------------------------------------------
+# Vehicle profile blocklist — models that should never create a VehicleProfile
+# even though rtl_433 classifies them as 'tpms' via the regex rules.
+# ---------------------------------------------------------------------------
+
+_VEHICLE_PROFILE_BLOCKLIST = [
+    "lacrosse", "acurite", "nexus", "oregon", "hideki", "rubicson",
+    "secplus", "chamberlain", "lineardelta", "holman", "fineoffset",
+    "fine offset", "wh", "gt-wt", "bresser", "tfa", "kedsum", "auriol",
+]
+
+
+def _is_blocked_model(model: str) -> bool:
+    """Return True if model should not create a VehicleProfile."""
+    m = (model or "").lower()
+    return any(b in m for b in _VEHICLE_PROFILE_BLOCKLIST)
+
 
 # ---------------------------------------------------------------------------
 # Signal classification
@@ -425,7 +443,14 @@ class SdrCaptureEngine:
             self._stop.wait(self._PROFILE_INTERVAL)
 
     def _update_vehicle_profiles(self):
-        """Aggregate TPMS sdr_signals into vehicle_profiles (upsert)."""
+        """Aggregate TPMS sdr_signals into vehicle_profiles (upsert).
+
+        Blocklisted models (weather stations, garage door openers, etc.) are
+        silently skipped.  Auto-flagging uses ghost-vehicle detection only:
+        flagged=True when sighting_count > 100 AND the vehicle has never been
+        seen with any co-present WiFi device across all PresenceBundles.
+        The old 'frequent_visitor' threshold flag is no longer applied.
+        """
         from sqlalchemy import func
 
         session = get_session()
@@ -449,6 +474,10 @@ class SdrCaptureEngine:
                 if not row.device_uid:
                     continue
 
+                # Skip non-vehicle sensors (weather stations, remotes, etc.)
+                if _is_blocked_model(row.model):
+                    continue
+
                 profile = (
                     session.query(VehicleProfile)
                     .filter(VehicleProfile.sensor_id == row.device_uid)
@@ -467,14 +496,42 @@ class SdrCaptureEngine:
                 profile.last_seen = row.last_seen
                 profile.avg_rssi = round(row.avg_rssi, 1) if row.avg_rssi is not None else None
 
-                # Auto-flag frequent visitors (10+ sightings)
-                if row.sightings >= 10 and not profile.flagged:
-                    profile.flagged = True
-                    profile.flag_reason = "frequent_visitor"
-                    logger.info(
-                        "Vehicle profile flagged as frequent_visitor: %s (%d sightings)",
-                        row.device_uid, row.sightings,
+                # Ghost-vehicle detection: flag only when sighting_count > 100
+                # AND the vehicle has never appeared with a co-present WiFi device.
+                # Never override a manual flag (flag_reason = 'manual').
+                if profile.flag_reason != "manual":
+                    total_bundles = (
+                        session.query(func.count(PresenceBundle.id))
+                        .filter(PresenceBundle.tpms_sensor_id == row.device_uid)
+                        .scalar() or 0
                     )
+                    wifi_bundles = (
+                        session.query(func.count(PresenceBundle.id))
+                        .filter(
+                            PresenceBundle.tpms_sensor_id == row.device_uid,
+                            PresenceBundle.wifi_device_ids != "[]",
+                        )
+                        .scalar() or 0
+                    )
+                    is_ghost = (
+                        row.sightings > 100
+                        and total_bundles > 0
+                        and wifi_bundles == 0
+                    )
+                    if is_ghost and not (profile.flagged and profile.flag_reason == "ghost_vehicle"):
+                        profile.flagged = True
+                        profile.flag_reason = "ghost_vehicle"
+                        logger.info(
+                            "Vehicle profile flagged as ghost_vehicle: %s "
+                            "(%d sightings, 0 WiFi bundles out of %d)",
+                            row.device_uid, row.sightings, total_bundles,
+                        )
+                    elif not is_ghost and profile.flagged and profile.flag_reason in (
+                        None, "frequent_visitor", "ghost_vehicle"
+                    ):
+                        # Clear stale flag — vehicle now has WiFi correlation
+                        profile.flagged = False
+                        profile.flag_reason = None
 
                 updated += 1
 
@@ -488,7 +545,8 @@ class SdrCaptureEngine:
             session.close()
 
     def _correlate_tpms(self, sig_id: int):
-        """Background thread: correlate a TPMS signal with Frigate car events."""
+        """Background thread: correlate a TPMS signal with Frigate car events,
+        then build a PresenceBundle capturing all co-present sensors."""
         try:
             from analysis.correlation import correlate_sdr_frigate
             matches = correlate_sdr_frigate(sig_id)
@@ -499,6 +557,12 @@ class SdrCaptureEngine:
                 )
         except Exception as e:
             logger.error("TPMS/Frigate correlation error: %s", e)
+
+        try:
+            from analysis.presence_engine import build_presence_bundle
+            build_presence_bundle(sig_id)
+        except Exception as e:
+            logger.error("Presence bundle build error for signal %d: %s", sig_id, e)
 
     # -- stats --
 

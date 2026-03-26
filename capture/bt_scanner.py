@@ -40,6 +40,26 @@ from database import (
     init_db,
 )
 
+# OUI vendor resolution — same database scapy loads for WiFi capture
+try:
+    from capture.wifi_capture import resolve_vendor as _resolve_vendor
+except ImportError:
+    try:
+        from scapy.all import conf as _scapy_conf
+        _manuf_db = _scapy_conf.manufdb
+
+        def _resolve_vendor(mac: str) -> str | None:
+            try:
+                r = _manuf_db.lookup(mac)
+                if r and r[0]:
+                    return str(r[1] if len(r) > 1 and r[1] else r[0])
+            except Exception:
+                pass
+            return None
+    except Exception:
+        def _resolve_vendor(mac: str) -> str | None:
+            return None
+
 logger = logging.getLogger("sentinel.bluetooth")
 
 
@@ -566,6 +586,13 @@ class BluetoothScanEngine:
             }
             if name:
                 kwargs["hostname"] = name
+
+            # Resolve OUI vendor for non-randomized MACs (same as WiFi capture)
+            if not randomized:
+                vendor = _resolve_vendor(mac)
+                # Discard passthrough results where scapy returns the MAC itself
+                if vendor and vendor.upper() != mac.upper():
+                    kwargs["vendor"] = vendor
 
             device, created = get_or_create_device(session, mac, **kwargs)
 

@@ -1,203 +1,1098 @@
 {% extends "base.html" %}
-{% block title %} — Command Center{% endblock %}
+{% block title %} — Operations{% endblock %}
+{% block page_class %}page-ops{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ================================================================
+   OPERATIONS PAGE — analyst workstation layout
+   ================================================================ */
+
+/* ---- Ops header bar ---- */
+.ops-header {
+  display: flex;
+  align-items: center;
+  padding: 0 1.2rem;
+  height: 46px;
+  background: #080c10;
+  border-bottom: 1px solid #1a1f28;
+  gap: 1rem;
+  flex-shrink: 0;
+}
+.ops-brand {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--amber);
+  letter-spacing: 2.5px;
+  white-space: nowrap;
+}
+.ops-brand span {
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-weight: 400;
+  margin-left: 5px;
+  letter-spacing: 0.5px;
+}
+.ops-services {
+  flex: 1;
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  justify-content: center;
+}
+.svc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0.12rem 0.48rem;
+  border-radius: 2px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  border: 1px solid;
+  transition: all 0.2s;
+}
+.svc-pill.active {
+  color: var(--green);
+  border-color: rgba(63,185,80,0.35);
+  background: rgba(63,185,80,0.07);
+}
+.svc-pill.inactive, .svc-pill.failed {
+  color: var(--red);
+  border-color: rgba(248,81,73,0.35);
+  background: rgba(248,81,73,0.07);
+}
+.svc-pill.unknown, .svc-pill.activating, .svc-pill.loading {
+  color: var(--text-muted);
+  border-color: rgba(110,118,129,0.2);
+  background: transparent;
+}
+.svc-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.ops-clock-area {
+  text-align: right;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ops-time {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
+  line-height: 1.1;
+}
+.ops-date {
+  display: block;
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  text-align: right;
+}
+
+/* ---- Threat band ---- */
+.threat-band {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border-bottom: 1px solid #1a1f28;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.threat-band.all-clear {
+  background: rgba(63,185,80,0.06);
+  border-bottom-color: rgba(63,185,80,0.18);
+  color: var(--green);
+  justify-content: center;
+}
+.threat-band.has-threats {
+  background: rgba(248,81,73,0.05);
+  border-bottom-color: rgba(248,81,73,0.18);
+}
+.threat-marquee-wrap {
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+.threat-marquee {
+  display: flex;
+  white-space: nowrap;
+  animation: marquee-scroll 30s linear infinite;
+}
+.threat-marquee:hover { animation-play-state: paused; }
+@keyframes marquee-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.threat-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 1.8rem;
+}
+.ti-level-red    { color: var(--red); }
+.ti-level-yellow { color: var(--amber); }
+.ti-type   { color: var(--text-dim); }
+.ti-target { color: var(--text); }
+.ti-time   { color: var(--text-muted); }
+.ti-sep    { color: #2a2f3a; font-size: 0.8rem; }
+
+/* ---- Main 3-column grid ---- */
+.ops-body {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 44px - 46px - 26px - 64px);
+}
+.ops-grid {
+  display: grid;
+  grid-template-columns: 30% 40% 30%;
+  flex: 1;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+.ops-col {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  padding: 0.55rem;
+  gap: 0.45rem;
+}
+.ops-col:last-child { border-right: none; }
+.ops-col::-webkit-scrollbar { width: 4px; }
+.ops-col::-webkit-scrollbar-track { background: transparent; }
+.ops-col::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ---- Ops panels ---- */
+.ops-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.ops-ph {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0.55rem;
+  background: rgba(0,0,0,0.25);
+  border-bottom: 1px solid var(--border);
+}
+.ops-ph-title {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-muted);
+}
+.ops-ph-accent { color: var(--amber); margin-right: 3px; }
+.ops-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  min-width: 18px;
+  text-align: center;
+  padding: 0.04rem 0.32rem;
+  border-radius: 2px;
+  background: rgba(110,118,129,0.1);
+  border: 1px solid rgba(110,118,129,0.2);
+  color: var(--text-dim);
+}
+.ops-badge.b-amber  { background: rgba(230,168,23,0.1);   border-color: rgba(230,168,23,0.2);   color: var(--amber); }
+.ops-badge.b-green  { background: rgba(63,185,80,0.1);    border-color: rgba(63,185,80,0.2);    color: var(--green); }
+.ops-badge.b-red    { background: rgba(248,81,73,0.1);    border-color: rgba(248,81,73,0.2);    color: var(--red); }
+.ops-badge.b-cyan   { background: rgba(0,200,220,0.08);   border-color: rgba(0,200,220,0.15);   color: #00c8dc; }
+.ops-badge.b-purple { background: rgba(188,140,255,0.1);  border-color: rgba(188,140,255,0.2);  color: var(--purple); }
+
+/* ---- Active devices summary ---- */
+.act-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+.act-cell {
+  text-align: center;
+  padding: 0.45rem 0.2rem;
+  border-right: 1px solid var(--border);
+}
+.act-cell:last-child { border-right: none; }
+.act-val {
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.act-lbl {
+  font-size: 0.52rem;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  margin-top: 0.18rem;
+}
+
+/* ---- Data rows (compact) ---- */
+.dr {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.73rem;
+  transition: background 0.1s;
+  min-height: 36px;
+}
+.dr:last-child { border-bottom: none; }
+.dr:hover { background: var(--bg-hover); }
+.dr.clickable { cursor: pointer; }
+.dr.lb-amber  { border-left: 2px solid var(--amber);  padding-left: 0.4rem; }
+.dr.lb-red    { border-left: 2px solid var(--red);    padding-left: 0.4rem; }
+.dr.lb-green  { border-left: 2px solid var(--green);  padding-left: 0.4rem; }
+.dr.lb-blue   { border-left: 2px solid var(--blue);   padding-left: 0.4rem; }
+.dr.lb-cyan   { border-left: 2px solid #00c8dc;       padding-left: 0.4rem; }
+.dr.lb-purple { border-left: 2px solid var(--purple); padding-left: 0.4rem; }
+
+.dr-main { flex: 1; min-width: 0; overflow: hidden; }
+.dr-top  { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.3; }
+.dr-sub  { font-size: 0.6rem; color: var(--text-dim); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dr-right { text-align: right; flex-shrink: 0; }
+.dr-meta { font-size: 0.62rem; color: var(--text-muted); white-space: nowrap; line-height: 1.4; }
+
+/* Micro-badge */
+.mb {
+  display: inline-block;
+  font-size: 0.56rem;
+  font-weight: 700;
+  padding: 0.03rem 0.28rem;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.mb-red    { background: rgba(248,81,73,0.15);   color: var(--red);      border: 1px solid rgba(248,81,73,0.3); }
+.mb-amber  { background: rgba(230,168,23,0.15);  color: var(--amber);    border: 1px solid rgba(230,168,23,0.3); }
+.mb-green  { background: rgba(63,185,80,0.15);   color: var(--green);    border: 1px solid rgba(63,185,80,0.3); }
+.mb-blue   { background: rgba(88,166,255,0.15);  color: var(--blue);     border: 1px solid rgba(88,166,255,0.3); }
+.mb-purple { background: rgba(188,140,255,0.15); color: var(--purple);   border: 1px solid rgba(188,140,255,0.3); }
+.mb-cyan   { background: rgba(0,200,220,0.1);    color: #00c8dc;         border: 1px solid rgba(0,200,220,0.2); }
+.mb-dim    { background: rgba(110,118,129,0.1);  color: var(--text-dim); border: 1px solid rgba(110,118,129,0.2); }
+
+.empty-dr {
+  padding: 0.6rem 0.55rem;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+.empty-dr::before { content: '· '; color: var(--border-hi); }
+
+/* ---- Camera strip ---- */
+.cam-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s;
+  min-height: 52px;
+}
+.cam-row:last-child { border-bottom: none; }
+.cam-row:hover { background: var(--bg-hover); }
+.cam-thumb {
+  width: 64px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  background: #0a0e14;
+}
+.cam-no-feed {
+  width: 64px;
+  height: 44px;
+  border-radius: 2px;
+  border: 1px dashed var(--border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.5rem;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+.cam-info    { flex: 1; min-width: 0; overflow: hidden; }
+.cam-name    { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.7px; color: var(--text-dim); }
+.cam-label   { font-size: 0.74rem; font-weight: 600; color: var(--purple); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cam-time    { font-size: 0.6rem; color: var(--text-muted); margin-top: 1px; }
+
+/* ---- Snapshot lightbox ---- */
+#snap-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0,0,0,0.88);
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+#snap-modal.open { display: flex; }
+#snap-modal img {
+  max-width: 90vw;
+  max-height: 88vh;
+  border-radius: 3px;
+  border: 1px solid var(--border-hi);
+  box-shadow: 0 0 60px rgba(0,0,0,0.8);
+}
+#snap-modal-label {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  background: rgba(0,0,0,0.7);
+  padding: 0.3rem 0.8rem;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* ---- Activity pulse ---- */
+.ops-pulse {
+  height: 64px;
+  padding: 0 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  background: #080c10;
+  border-top: 1px solid #1a1f28;
+  flex-shrink: 0;
+}
+.ops-pulse-lbl {
+  font-size: 0.58rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  flex-shrink: 0;
+}
+#pulse-chart {
+  flex: 1;
+  height: 48px !important;
+  max-height: 48px;
+}
+
+/* ---- Person snapshot ---- */
+.person-snap {
+  width: 52px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  cursor: zoom-in;
+}
+.person-no-snap {
+  width: 52px;
+  height: 36px;
+  border-radius: 2px;
+  border: 1px dashed var(--border);
+  flex-shrink: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.48rem;
+  color: var(--border-hi);
+}
+
+.mac-id { font-family: var(--font-mono); color: var(--amber); font-size: 0.7rem; }
+.mac-id a { color: inherit; text-decoration: none; }
+.mac-id a:hover { text-decoration: underline; }
+.cyan-id { font-family: var(--font-mono); color: #00c8dc; font-size: 0.68rem; }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="page-header">
-  <h1>COMMAND CENTER</h1>
-  <span class="subtitle">Real-time surveillance intelligence overview</span>
-</div>
 
-<!-- Stat cards -->
-<div class="grid grid-6 mb-1" style="grid-template-columns: repeat(7, 1fr);">
-  <div class="card stat-card cyan">
-    <div class="card-header">Total Devices</div>
-    <div class="card-value" id="stat-total-devices">{{ stats.total_devices }}</div>
-    <div class="card-footer">all time tracked</div>
+<!-- HEADER BAR -->
+<div class="ops-header">
+  <div class="ops-brand">SENTINEL <span>v1.0</span></div>
+  <div class="ops-services" id="svc-pills">
+    <span class="svc-pill loading"><span class="svc-dot"></span>LOADING</span>
   </div>
-  <div class="card stat-card green">
-    <div class="card-header">Active Now</div>
-    <div class="card-value" id="stat-active">{{ stats.active_devices }}</div>
-    <div class="card-footer">within 10 min</div>
-  </div>
-  <div class="card stat-card blue">
-    <div class="card-header">Events Today</div>
-    <div class="card-value" id="stat-events">{{ stats.events_today }}</div>
-    <div class="card-footer">since midnight</div>
-  </div>
-  <div class="card stat-card purple">
-    <div class="card-header">New Devices</div>
-    <div class="card-value" id="stat-new">{{ stats.new_devices_today }}</div>
-    <div class="card-footer">first seen today</div>
-  </div>
-  <div class="card stat-card yellow">
-    <div class="card-header">Frigate Events</div>
-    <div class="card-value" id="stat-frigate">{{ stats.frigate_today }}</div>
-    <div class="card-footer">visual detections</div>
-  </div>
-  <div class="card stat-card magenta">
-    <div class="card-header">Alerts</div>
-    <div class="card-value" id="stat-alerts">{{ stats.alerts_today }}</div>
-    <div class="card-footer">triggered today</div>
-  </div>
-  <div class="card stat-card red">
-    <div class="card-header">Drones</div>
-    <div class="card-value" id="stat-drones">{{ stats.drones_detected }}</div>
-    <div class="card-footer">all time detected</div>
+  <div class="ops-clock-area">
+    <span class="ops-time" id="ops-time">--:--:--</span>
+    <span class="ops-date" id="ops-date">---</span>
   </div>
 </div>
 
-<!-- Charts row -->
-<div class="grid grid-3-1 mb-1">
-  <div class="card">
-    <div class="card-header">24-Hour Activity</div>
-    <canvas id="chart-activity" height="85"></canvas>
-  </div>
-  <div class="card">
-    <div class="card-header">Device Types</div>
-    <div style="max-width:200px;margin:0 auto;position:relative">
-      <canvas id="chart-types"></canvas>
-    </div>
-  </div>
+<!-- THREAT BAND -->
+<div class="threat-band all-clear" id="threat-band">
+  <span style="letter-spacing:1.5px">&#9612; ALL SENSORS NOMINAL &#x2014; NO ACTIVE THREATS &#9616;</span>
 </div>
 
-<!-- Live feeds -->
-<div class="grid grid-2">
-  <!-- Live event feed -->
-  <div class="card">
-    <div class="card-header">Live Event Feed</div>
-    <div class="feed" id="live-feed">
-      {% for evt, dev, tag in recent_events %}
-      <div class="feed-item" {% if dev %}data-href="/devices/{{ dev.id }}"{% endif %}>
-        <span class="time">{{ evt.timestamp | localtime }}</span>
-        <span class="type"><span class="badge evt-{{ evt.event_type }}">{{ evt.event_type | replace("_", " ") }}</span></span>
-        <span class="detail">
-          {% if dev %}
-            <a href="/devices/{{ dev.id }}" class="mac">{{ dev.alias or dev.vendor or dev.mac }}</a>
-          {% else %}—{% endif %}
-          {% if tag %}
-            <span class="badge badge-tag tag-{{ tag.category }}">{{ tag.category }}{% if tag.label %} · {{ tag.label }}{% endif %}</span>
-            {% if tag.flagged %}<span class="badge badge-magenta">FLAGGED</span>{% endif %}
-          {% endif %}
-          {% if evt.camera %} &middot; {{ evt.camera }}{% endif %}
-          {% if evt.ssid %} &middot; {{ evt.ssid }}{% endif %}
-          {% if evt.rssi %} &middot; {{ evt.rssi }} dBm{% endif %}
-        </span>
+<!-- MAIN BODY -->
+<div class="ops-body">
+  <div class="ops-grid">
+
+    <!-- ============================================================
+         LEFT: RIGHT NOW
+         ============================================================ -->
+    <div class="ops-col">
+
+      <div class="ops-panel">
+        <div class="ops-ph">
+          <span class="ops-ph-title"><span class="ops-ph-accent">&#8250;</span> Active Devices</span>
+          <span class="ops-badge b-amber" id="badge-active-total">&#8212;</span>
+        </div>
+        <div class="act-summary">
+          <div class="act-cell">
+            <div class="act-val" id="ad-total" style="color:var(--text)">&#8212;</div>
+            <div class="act-lbl">Total</div>
+          </div>
+          <div class="act-cell">
+            <div class="act-val" id="ad-resident" style="color:var(--green)">&#8212;</div>
+            <div class="act-lbl">Resident</div>
+          </div>
+          <div class="act-cell">
+            <div class="act-val" id="ad-neighbor" style="color:var(--blue)">&#8212;</div>
+            <div class="act-lbl">Neighbor</div>
+          </div>
+          <div class="act-cell">
+            <div class="act-val" id="ad-unknown" style="color:var(--amber)">&#8212;</div>
+            <div class="act-lbl">Unknown</div>
+          </div>
+        </div>
       </div>
-      {% endfor %}
-      {% if not recent_events %}
-      <div class="empty-state">No events captured yet. Start the capture services.</div>
-      {% endif %}
-    </div>
-  </div>
 
-  <!-- Active devices -->
-  <div class="card">
-    <div class="card-header">Active Devices <span class="text-cyan">({{ active_devices | length }})</span></div>
-    <div class="table-wrap">
-      <table id="tbl-active">
-        <thead><tr>
-          <th>Device</th>
-          <th>Type</th>
-          <th>Tag</th>
-          <th>Last Seen</th>
-        </tr></thead>
-        <tbody>
-          {% for dev, tag in active_devices %}
-          <tr>
-            <td>
-              <a href="/devices/{{ dev.id }}" class="mac">{{ dev.mac }}</a>
-              {% if dev.alias or dev.vendor %}
-              <br><span class="text-dim" style="font-size:0.72rem">{{ dev.alias or dev.vendor }}</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if dev.device_type == 'wifi' %}<span class="badge badge-blue">WiFi</span>
-              {% elif dev.device_type == 'bluetooth_le' %}<span class="badge badge-purple">BLE</span>
-              {% elif dev.device_type == 'bluetooth_classic' %}<span class="badge badge-purple">BT</span>
-              {% else %}<span class="badge badge-dim">?</span>{% endif %}
-            </td>
-            <td>
-              {% if tag %}
-              <span class="tag-{{ tag.category }}">{{ tag.category }}{% if tag.label %} · {{ tag.label }}{% endif %}</span>
-              {% if tag.flagged %} <span class="badge badge-magenta">FLAGGED</span>{% endif %}
-              {% else %}<span class="text-muted">—</span>{% endif %}
-            </td>
-            <td data-val="{{ dev.last_seen.isoformat() if dev.last_seen else '' }}">
-              <span class="text-dim">{{ dev.last_seen | timeago }}</span>
-            </td>
-          </tr>
-          {% endfor %}
-          {% if not active_devices %}
-          <tr><td colspan="4" class="empty-state">No active devices</td></tr>
-          {% endif %}
-        </tbody>
-      </table>
+      <div class="ops-panel">
+        <div class="ops-ph">
+          <span class="ops-ph-title"><span class="ops-ph-accent">&#8250;</span> Open Visits</span>
+          <span class="ops-badge" id="badge-open-visits">&#8212;</span>
+        </div>
+        <div id="open-visits-body"><div class="empty-dr">Loading&#8230;</div></div>
+      </div>
+
+      <div class="ops-panel">
+        <div class="ops-ph">
+          <span class="ops-ph-title"><span class="ops-ph-accent">&#8250;</span> Recent Arrivals</span>
+          <span class="ops-badge b-cyan" id="badge-arrivals">&#8212;</span>
+        </div>
+        <div id="arrivals-body"><div class="empty-dr">Loading&#8230;</div></div>
+      </div>
+
     </div>
-  </div>
+
+    <!-- ============================================================
+         CENTER: ATTENTION QUEUE
+         ============================================================ -->
+    <div class="ops-col">
+
+      <div class="ops-panel">
+        <div class="ops-ph">
+          <span class="ops-ph-title"><span class="ops-ph-accent">&#8250;</span> Persistent Unknowns</span>
+          <span class="ops-badge b-amber" id="badge-pu">&#8212;</span>
+        </div>
+        <div id="pu-body"><div class="empty-dr">Loading&#8230;</div></div>
+      </div>
+
+      <div class="ops-panel">
+        <div class="ops-ph">
+          <span class="ops-ph-title"><span class="ops-ph-accent">&#8250;</span> Ghost Vehicles</span>
+          <span class="ops-badge b-cyan" id="badge-ghost">&#8212;</span>
+        </div>
+        <div id="ghost-body"><div class="empty-dr">Loading&#8230;</div></div>
+      </div>
+
+      <div class="ops-panel">
+        <div class="ops-ph">
+          <span class="ops-ph-title"><span class="ops-ph-accent">&#8250;</span> Unreviewed Persons <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:0.58rem;color:var(--text-muted)">(24h)</span></span>
+          <span class="ops-badge b-purple" id="badge-persons">&#8212;</span>
+        </div>
+        <div id="persons-body"><div class="empty-dr">Loading&#8230;</div></div>
+      </div>
+
+      <div class="ops-panel">
+        <div class="ops-ph">
+          <span class="ops-ph-title"><span class="ops-ph-accent">&#8250;</span> Hacker Hardware <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:0.58rem;color:var(--text-muted)">(24h)</span></span>
+          <span class="ops-badge" id="badge-hacker">&#8212;</span>
+        </div>
+        <div id="hacker-body"><div class="empty-dr">Loading&#8230;</div></div>
+      </div>
+
+    </div>
+
+    <!-- ============================================================
+         RIGHT: SENSORS
+         ============================================================ -->
+    <div class="ops-col">
+
+      <div class="ops-panel">
+        <div class="ops-ph">
+          <span class="ops-ph-title" style="color:var(--purple)"><span class="ops-ph-accent">&#8250;</span> Camera Feed</span>
+          <span class="ops-badge b-purple">4</span>
+        </div>
+        <div id="camera-strip-body"><div class="empty-dr">Loading&#8230;</div></div>
+      </div>
+
+      <div class="ops-panel">
+        <div class="ops-ph">
+          <span class="ops-ph-title" style="color:#00c8dc"><span style="color:#00c8dc;margin-right:3px">&#8250;</span> SDR Pulse</span>
+          <span class="ops-badge b-cyan" id="badge-sdr">&#8212;</span>
+        </div>
+        <div id="sdr-pulse-body"><div class="empty-dr">Loading&#8230;</div></div>
+      </div>
+
+      <div class="ops-panel">
+        <div class="ops-ph">
+          <span class="ops-ph-title"><span class="ops-ph-accent">&#8250;</span> Drone Activity</span>
+          <span class="ops-badge" id="badge-drone">0</span>
+        </div>
+        <div id="drone-body">
+          <div class="empty-dr">No drone activity in 24h</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div><!-- /ops-grid -->
+</div><!-- /ops-body -->
+
+<!-- ACTIVITY PULSE -->
+<div class="ops-pulse">
+  <span class="ops-pulse-lbl">24h pulse</span>
+  <canvas id="pulse-chart"></canvas>
 </div>
+
+<!-- Snapshot lightbox -->
+<div id="snap-modal" onclick="closeSnapshot()">
+  <img id="snap-modal-img" src="" alt="snapshot">
+  <div id="snap-modal-label"></div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
-// 24h activity chart
-const actCtx = document.getElementById('chart-activity');
-if (actCtx) {
-  const hourlyData = {{ hourly_data | tojson_safe }};
-  new Chart(actCtx, {
-    type: 'bar',
-    data: {
-      labels: hourlyData.map(function(d){ return d.hour; }),
-      datasets: [{
-        data: hourlyData.map(function(d){ return d.count; }),
-        backgroundColor: function(ctx) {
-          const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
-          g.addColorStop(0, 'rgba(230,168,23,0.5)');
-          g.addColorStop(1, 'rgba(230,168,23,0.04)');
-          return g;
-        },
-        borderColor: 'rgba(230,168,23,0.7)',
-        borderWidth: 1,
-        borderRadius: 2,
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
-        y: { grid: { color: 'rgba(48,54,61,0.6)' }, beginAtZero: true, ticks: { precision: 0 } }
-      }
-    }
+const TZ_OPS = '{{ config.get("general",{}).get("timezone","America/Denver") }}';
+
+/* ---- Ops header clock ---- */
+(function() {
+  function tick() {
+    var now = new Date();
+    try {
+      document.getElementById('ops-time').textContent = now.toLocaleTimeString('en-US', {
+        timeZone: TZ_OPS, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+      document.getElementById('ops-date').textContent = now.toLocaleDateString('en-US', {
+        timeZone: TZ_OPS, weekday: 'short', year: 'numeric', month: 'short', day: '2-digit'
+      }).toUpperCase();
+    } catch(e) {}
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+
+/* ---- Snapshot lightbox ---- */
+function openSnapshot(fname, label) {
+  if (!fname) return;
+  document.getElementById('snap-modal-img').src = '/snapshots/' + fname;
+  document.getElementById('snap-modal-label').textContent = label || fname;
+  document.getElementById('snap-modal').classList.add('open');
+}
+function closeSnapshot() {
+  document.getElementById('snap-modal').classList.remove('open');
+}
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeSnapshot(); });
+
+/* ---- Helpers ---- */
+function ago(iso) {
+  if (!iso) return '—';
+  var s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 0) s = 0;
+  if (s < 60)    return s + 's ago';
+  if (s < 3600)  return Math.floor(s/60) + 'm ago';
+  if (s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function dwell(secs) {
+  if (secs == null) return '—';
+  if (secs < 60)   return secs + 's';
+  if (secs < 3600) return Math.floor(secs/60) + 'm ' + (secs%60) + 's';
+  return Math.floor(secs/3600) + 'h ' + Math.floor((secs%3600)/60) + 'm';
+}
+function setbadge(id, n, cls) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = n;
+  if (cls !== undefined) el.className = 'ops-badge ' + (cls || '');
+}
+function confBadge(c) {
+  if (c === 'high')   return '<span class="mb mb-green">HIGH</span>';
+  if (c === 'medium') return '<span class="mb mb-amber">MED</span>';
+  return '<span class="mb mb-dim">LOW</span>';
+}
+function tagMbColor(cat) {
+  var m = {resident:'green',neighbor:'blue',unknown:'amber',flagged:'red',delivery:'amber',visitor:'purple'};
+  return m[cat] || 'dim';
+}
+function catBadge(cat, label) {
+  return '<span class="mb mb-' + tagMbColor(cat) + '">' + (label || cat || '?') + '</span>';
+}
+function trunc(s, n) { if (!s) return ''; return s.length > n ? s.substring(0,n) + '\u2026' : s; }
+
+/* ---- Service status pills ---- */
+var SVC_NAMES = {
+  'sentinel-wifi':    'WIFI',
+  'sentinel-bt':      'BT',
+  'sentinel-sdr':     'SDR',
+  'sentinel-frigate': 'CAM',
+  'sentinel-droneid': 'DRONE',
+  'sentinel-web':     'WEB'
+};
+function renderSvcPills(data) {
+  var c = document.getElementById('svc-pills');
+  if (!c) return;
+  c.innerHTML = '';
+  Object.keys(SVC_NAMES).forEach(function(svc) {
+    var st = (data && data[svc]) || 'unknown';
+    var el = document.createElement('span');
+    el.className = 'svc-pill ' + st;
+    el.title = svc + ': ' + st;
+    el.innerHTML = '<span class="svc-dot"></span>' + SVC_NAMES[svc];
+    c.appendChild(el);
   });
 }
+function loadSvcStatus() {
+  fetch('/api/service-status')
+    .then(function(r){ return r.json(); })
+    .then(renderSvcPills)
+    .catch(function(){ renderSvcPills({}); });
+}
+loadSvcStatus();
+setInterval(loadSvcStatus, 60000);
 
-// Device types doughnut
-const typeCtx = document.getElementById('chart-types');
-if (typeCtx) {
-  const types = {{ type_counts | tojson_safe }};
-  new Chart(typeCtx, {
-    type: 'doughnut',
-    data: {
-      labels: ['WiFi', 'BLE', 'BT Classic', 'Unknown'],
-      datasets: [{
-        data: [types.wifi || 0, types.bluetooth_le || 0, types.bluetooth_classic || 0, types.unknown || 0],
-        backgroundColor: ['rgba(88,166,255,0.65)', 'rgba(188,140,255,0.65)', 'rgba(163,113,247,0.55)', 'rgba(110,118,129,0.4)'],
-        borderColor: ['#58a6ff', '#bc8cff', '#a371f7', '#6e7681'],
-        borderWidth: 1,
-      }]
+/* ---- Threat band ---- */
+function renderThreatBand(items) {
+  var band = document.getElementById('threat-band');
+  if (!band) return;
+  if (!items || !items.length) {
+    band.className = 'threat-band all-clear';
+    band.innerHTML = '<span style="letter-spacing:1.5px">&#9612; ALL SENSORS NOMINAL &#x2014; NO ACTIVE THREATS &#9616;</span>';
+    return;
+  }
+  band.className = 'threat-band has-threats';
+  var html = '';
+  for (var rep = 0; rep < 2; rep++) {
+    items.forEach(function(item) {
+      html += '<span class="threat-item">'
+        + '<span class="ti-level-' + item.level + '">[' + item.level.toUpperCase() + ']</span>'
+        + ' <span class="ti-type">' + (item.alert_type||'').replace(/_/g,' ') + '</span>'
+        + ' <span class="ti-target">' + (item.mac || '—') + '</span>'
+        + ' <span class="ti-time">' + ago(item.timestamp) + '</span>'
+        + '</span><span class="ti-sep"> | </span>';
+    });
+  }
+  band.innerHTML = '<div class="threat-marquee-wrap"><div class="threat-marquee">' + html + '</div></div>';
+}
+
+/* ---- Open visits ---- */
+function renderOpenVisits(visits) {
+  var c = document.getElementById('open-visits-body');
+  if (!c) return;
+  setbadge('badge-open-visits', visits.length);
+  if (!visits.length) { c.innerHTML = '<div class="empty-dr">No open visits</div>'; return; }
+  var html = '';
+  visits.slice(0, 10).forEach(function(v) {
+    var cat = v.tag_category || 'unknown';
+    var clr = tagMbColor(cat);
+    html += '<div class="dr lb-' + clr + ' clickable" onclick="location.href=\'/devices/' + v.device_id + '\'">'
+      + '<div class="dr-main">'
+      +   '<div class="dr-top"><span class="mac-id"><a href="/devices/' + v.device_id + '">' + v.mac + '</a></span>'
+      +     (cat !== 'unknown' ? ' ' + catBadge(cat, v.tag_label) : '')
+      +   '</div>'
+      +   (v.vendor ? '<div class="dr-sub">' + trunc(v.vendor, 28) + '</div>' : '')
+      + '</div>'
+      + '<div class="dr-right">'
+      +   '<div class="dr-meta" style="color:var(--amber);font-variant-numeric:tabular-nums">' + dwell(v.dwell_seconds) + '</div>'
+      +   (v.rssi != null ? '<div class="dr-meta">' + v.rssi + ' dBm</div>' : '')
+      + '</div>'
+      + '</div>';
+  });
+  c.innerHTML = html;
+}
+
+/* ---- Recent arrivals ---- */
+function renderArrivals(arrivals) {
+  var c = document.getElementById('arrivals-body');
+  if (!c) return;
+  setbadge('badge-arrivals', arrivals.length, 'b-cyan');
+  if (!arrivals.length) { c.innerHTML = '<div class="empty-dr">No correlated arrivals</div>'; return; }
+  var html = '';
+  arrivals.forEach(function(a) {
+    html += '<div class="dr lb-cyan">'
+      + '<div class="dr-main">'
+      +   '<div class="dr-top"><span class="cyan-id">' + trunc(a.tpms_model || a.tpms_sensor_id || 'TPMS', 22) + '</span> ' + confBadge(a.confidence) + '</div>'
+      +   (a.wifi_vendor ? '<div class="dr-sub">' + trunc(a.wifi_vendor, 28) + '</div>' : '')
+      + '</div>'
+      + '<div class="dr-right"><div class="dr-meta">' + ago(a.timestamp) + '</div></div>'
+      + '</div>';
+  });
+  c.innerHTML = html;
+}
+
+/* ---- Persistent unknowns ---- */
+function renderPersistentUnknowns(items) {
+  var c = document.getElementById('pu-body');
+  if (!c) return;
+  setbadge('badge-pu', items.length, items.length ? 'b-amber' : '');
+  if (!items.length) { c.innerHTML = '<div class="empty-dr">None identified</div>'; return; }
+  var html = '';
+  items.forEach(function(d) {
+    html += '<div class="dr lb-amber clickable" onclick="location.href=\'/devices/' + d.device_id + '\'">'
+      + '<div class="dr-main">'
+      +   '<div class="dr-top"><span class="mac-id"><a href="/devices/' + d.device_id + '">' + d.mac + '</a></span>'
+      +     (d.is_randomized ? ' <span class="mb mb-dim">RND</span>' : '')
+      +   '</div>'
+      +   '<div class="dr-sub">' + (d.vendor ? trunc(d.vendor, 30) : '<span style="color:var(--text-muted)">no vendor</span>') + '</div>'
+      + '</div>'
+      + '<div class="dr-right">'
+      +   '<div class="dr-meta" style="color:var(--amber)">' + d.days_seen + ' days</div>'
+      +   '<div class="dr-meta">' + d.total_visits + ' visits</div>'
+      + '</div>'
+      + '</div>';
+  });
+  c.innerHTML = html;
+}
+
+/* ---- Ghost vehicles ---- */
+function renderGhostVehicles(items) {
+  var c = document.getElementById('ghost-body');
+  if (!c) return;
+  setbadge('badge-ghost', items.length, items.length ? 'b-cyan' : '');
+  if (!items.length) { c.innerHTML = '<div class="empty-dr">None identified</div>'; return; }
+  var html = '';
+  items.forEach(function(v) {
+    html += '<div class="dr lb-cyan">'
+      + '<div class="dr-main">'
+      +   '<div class="dr-top"><span class="cyan-id">' + trunc(v.model || v.sensor_id, 22) + '</span></div>'
+      +   (v.model ? '<div class="dr-sub">' + v.sensor_id + '</div>' : '')
+      + '</div>'
+      + '<div class="dr-right">'
+      +   '<div class="dr-meta" style="color:var(--amber)">' + v.sighting_count + '\xd7</div>'
+      +   '<div class="dr-meta">' + ago(v.last_seen) + '</div>'
+      + '</div>'
+      + '</div>';
+  });
+  c.innerHTML = html;
+}
+
+/* ---- Unreviewed persons ---- */
+function renderUnreviewedPersons(items) {
+  var c = document.getElementById('persons-body');
+  if (!c) return;
+  setbadge('badge-persons', items.length, items.length ? 'b-purple' : '');
+  if (!items.length) { c.innerHTML = '<div class="empty-dr">None in last 24h</div>'; return; }
+  var html = '';
+  items.forEach(function(p) {
+    var hasSnap = !!p.snapshot_path;
+    html += '<div class="dr lb-purple">'
+      + (hasSnap
+        ? '<img class="person-snap" src="/snapshots/' + p.snapshot_path + '" loading="lazy"'
+          + ' onclick="event.stopPropagation();openSnapshot(\'' + p.snapshot_path + '\',\'' + (p.camera||'') + '\')"'
+          + ' onerror="this.outerHTML=\'<div class=&quot;person-no-snap&quot;>NO IMG</div>\'">'
+        : '<div class="person-no-snap">NO IMG</div>')
+      + '<div class="dr-main" style="margin-left:0.35rem">'
+      +   '<div class="dr-top" style="color:var(--purple)">' + (p.camera||'—') + '</div>'
+      +   '<div class="dr-sub">' + ago(p.timestamp) + (p.confidence ? ' · ' + Math.round(p.confidence*100) + '%' : '') + '</div>'
+      + '</div>'
+      + '</div>';
+  });
+  c.innerHTML = html;
+}
+
+/* ---- Hacker hardware ---- */
+function renderHackerHits(items) {
+  var c = document.getElementById('hacker-body');
+  if (!c) return;
+  if (!items.length) {
+    setbadge('badge-hacker', 0);
+    c.innerHTML = '<div class="empty-dr">None in last 24h</div>';
+    return;
+  }
+  setbadge('badge-hacker', items.length, 'b-red');
+  var html = '';
+  items.forEach(function(h) {
+    var atype = (h.alert_type||'').split(':').pop().replace(/_/g,' ');
+    html += '<div class="dr lb-red' + (h.device_id ? ' clickable' : '') + '"'
+      + (h.device_id ? ' onclick="location.href=\'/devices/'+h.device_id+'\'"' : '') + '>'
+      + '<div class="dr-main">'
+      +   '<div class="dr-top"><span class="mb mb-red">' + atype + '</span>'
+      +     (h.mac ? ' <span class="mac-id">' + h.mac + '</span>' : '')
+      +   '</div>'
+      +   (h.vendor ? '<div class="dr-sub">' + trunc(h.vendor, 30) + '</div>' : '')
+      + '</div>'
+      + '<div class="dr-right"><div class="dr-meta">' + ago(h.timestamp) + '</div></div>'
+      + '</div>';
+  });
+  c.innerHTML = html;
+}
+
+/* ---- Camera strip ---- */
+var CAM_DISPLAY = {
+  front_yard_east: 'Front East',
+  front_yard_west: 'Front West',
+  east_corridor:   'East Corridor',
+  west_corridor:   'West Corridor'
+};
+var CAM_ORDER = ['front_yard_east','front_yard_west','east_corridor','west_corridor'];
+
+function renderCameraStrip(camData) {
+  var c = document.getElementById('camera-strip-body');
+  if (!c) return;
+  var html = '';
+  CAM_ORDER.forEach(function(cam) {
+    var info = camData && camData[cam];
+    var dname = CAM_DISPLAY[cam] || cam.replace(/_/g,' ');
+    var clickFn = (info && info.snapshot_path)
+      ? 'openSnapshot(\'' + info.snapshot_path + '\',\'' + dname + '\')'
+      : '';
+    html += '<div class="cam-row" onclick="' + clickFn + '">';
+    if (info && info.snapshot_path) {
+      html += '<img class="cam-thumb" src="/snapshots/' + info.snapshot_path + '" loading="lazy"'
+        + ' onerror="this.outerHTML=\'<div class=&quot;cam-no-feed&quot;>NO FEED</div>\'">';
+    } else {
+      html += '<div class="cam-no-feed">NO FEED</div>';
+    }
+    html += '<div class="cam-info">'
+      + '<div class="cam-name">' + dname + '</div>'
+      + (info
+          ? '<div class="cam-label">' + (info.label || 'no label') + '</div>'
+          + '<div class="cam-time">' + ago(info.timestamp) + (info.confidence ? ' · ' + Math.round(info.confidence*100) + '%' : '') + '</div>'
+          : '<div class="cam-label" style="color:var(--text-muted)">no events</div>')
+      + '</div>'
+      + '</div>';
+  });
+  c.innerHTML = html;
+}
+
+/* ---- SDR pulse ---- */
+function sdrColor(cls) {
+  if (cls === 'tpms')     return '#00c8dc';
+  if (cls === 'keyfob' || cls === 'security') return 'var(--amber)';
+  if (cls === 'weather')  return 'var(--blue)';
+  if (cls === 'power')    return 'var(--green)';
+  return 'var(--text-dim)';
+}
+function sdrMbCls(cls) {
+  if (cls === 'tpms')     return 'mb-cyan';
+  if (cls === 'keyfob' || cls === 'security') return 'mb-amber';
+  if (cls === 'weather')  return 'mb-blue';
+  if (cls === 'power')    return 'mb-green';
+  return 'mb-dim';
+}
+function renderSdrPulse(sigs) {
+  var c = document.getElementById('sdr-pulse-body');
+  if (!c) return;
+  setbadge('badge-sdr', sigs.length, 'b-cyan');
+  if (!sigs.length) { c.innerHTML = '<div class="empty-dr">No SDR signals</div>'; return; }
+  var html = '';
+  sigs.forEach(function(s) {
+    html += '<div class="dr lb-cyan">'
+      + '<span class="mb ' + sdrMbCls(s.signal_class) + '">' + (s.signal_class||'?') + '</span>'
+      + '<div class="dr-main" style="margin-left:0.35rem">'
+      +   '<div class="dr-top" style="color:' + sdrColor(s.signal_class) + ';font-size:0.7rem">' + trunc(s.model || s.device_uid || '—', 22) + '</div>'
+      +   (s.frequency ? '<div class="dr-sub">' + (s.frequency/1e6).toFixed(1) + ' MHz</div>' : '')
+      + '</div>'
+      + '<div class="dr-right">'
+      +   (s.rssi != null ? '<div class="dr-meta">' + Math.round(s.rssi) + ' dBm</div>' : '')
+      +   '<div class="dr-meta">' + ago(s.timestamp) + '</div>'
+      + '</div>'
+      + '</div>';
+  });
+  c.innerHTML = html;
+}
+
+/* ---- Drone alert ---- */
+function renderDroneAlert(drones) {
+  var c = document.getElementById('drone-body');
+  var badge = document.getElementById('badge-drone');
+  if (!c) return;
+  badge.textContent = drones.length;
+  if (!drones.length) {
+    badge.className = 'ops-badge';
+    c.innerHTML = '<div class="empty-dr">No drone activity in 24h</div>';
+    return;
+  }
+  badge.className = 'ops-badge b-red';
+  var html = '';
+  drones.forEach(function(d) {
+    html += '<div class="dr lb-red">'
+      + '<span class="mb mb-red">DRONE</span>'
+      + '<div class="dr-main" style="margin-left:0.35rem">'
+      +   '<div class="dr-top"><span class="mac-id">' + (d.mac||'—') + '</span></div>'
+      +   (d.serial_number ? '<div class="dr-sub">ID: ' + d.serial_number + '</div>' : '')
+      + '</div>'
+      + '<div class="dr-right"><div class="dr-meta">' + ago(d.timestamp) + '</div></div>'
+      + '</div>';
+  });
+  c.innerHTML = html;
+}
+
+/* ---- Activity pulse chart ---- */
+var _pulseChart = null;
+
+function renderPulseChart(pulse) {
+  var ctx = document.getElementById('pulse-chart');
+  if (!ctx) return;
+  var counts   = pulse.counts   || new Array(24).fill(0);
+  var baseline = pulse.baseline || new Array(24).fill(0);
+  var curIdx   = (pulse.current_hour_idx !== undefined) ? pulse.current_hour_idx : 23;
+
+  var now = new Date();
+  var labels = [];
+  for (var i = 0; i < 24; i++) {
+    var h = new Date(now.getTime() - (23-i) * 3600000);
+    try {
+      labels.push(h.toLocaleTimeString('en-US', {timeZone: TZ_OPS, hour12:false, hour:'2-digit', minute:'2-digit'}));
+    } catch(e) { labels.push(''); }
+  }
+
+  var barColors = counts.map(function(cnt, i) {
+    var bl = baseline[i] || 0;
+    if (i === curIdx)          return 'rgba(230,168,23,0.85)';
+    if (bl > 0 && cnt > bl*2)  return 'rgba(248,81,73,0.75)';
+    if (bl > 3 && cnt < bl*0.25) return 'rgba(230,168,23,0.3)';
+    return 'rgba(88,166,255,0.38)';
+  });
+
+  var datasets = [
+    {
+      type: 'bar',
+      data: counts,
+      backgroundColor: barColors,
+      borderWidth: 0,
+      borderRadius: 1,
+      order: 2
     },
+    {
+      type: 'line',
+      data: baseline,
+      borderColor: 'rgba(110,118,129,0.45)',
+      borderWidth: 1,
+      borderDash: [2, 3],
+      pointRadius: 0,
+      fill: false,
+      tension: 0.4,
+      order: 1
+    }
+  ];
+
+  if (_pulseChart) {
+    _pulseChart.data.labels = labels;
+    _pulseChart.data.datasets[0].data = counts;
+    _pulseChart.data.datasets[0].backgroundColor = barColors;
+    _pulseChart.data.datasets[1].data = baseline;
+    _pulseChart.update('none');
+    return;
+  }
+
+  _pulseChart = new Chart(ctx, {
+    data: { labels: labels, datasets: datasets },
     options: {
       responsive: true,
-      maintainAspectRatio: true,
-      aspectRatio: 1,
-      cutout: '65%',
+      maintainAspectRatio: false,
+      animation: false,
       plugins: {
-        legend: { position: 'bottom', labels: { padding: 10, usePointStyle: true, pointStyle: 'rectRounded', font: { size: 11 } } }
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: function(items) { return items[0].label; },
+            label: function(ctx) {
+              return ctx.datasetIndex === 0 ? 'Events: ' + ctx.raw : 'Baseline: ' + ctx.raw;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          border: { display: false },
+          ticks: {
+            maxRotation: 0, color: '#4a5060', font: { size: 9 },
+            callback: function(val, i) { return i % 6 === 0 ? this.getLabelForValue(val) : ''; }
+          }
+        },
+        y: { display: false, beginAtZero: true }
       }
     }
   });
 }
 
-initSortable('tbl-active');
+/* ================================================================
+   MAIN LOADER
+   ================================================================ */
+function loadOpsData() {
+  fetch('/api/ops-data')
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      var ad = d.active_devices || {};
+      document.getElementById('ad-total').textContent    = ad.total    !== undefined ? ad.total    : '—';
+      document.getElementById('ad-resident').textContent = ad.resident !== undefined ? ad.resident : '—';
+      document.getElementById('ad-neighbor').textContent = ad.neighbor !== undefined ? ad.neighbor : '—';
+      document.getElementById('ad-unknown').textContent  = ad.unknown  !== undefined ? ad.unknown  : '—';
+      setbadge('badge-active-total', ad.total||0, ad.unknown > 0 ? 'b-amber' : 'b-green');
+
+      renderThreatBand(d.threat_band || []);
+      renderOpenVisits(d.open_visits || []);
+      renderArrivals(d.recent_arrivals || []);
+      renderPersistentUnknowns((d.attention||{}).persistent_unknowns || []);
+      renderGhostVehicles((d.attention||{}).ghost_vehicles || []);
+      renderUnreviewedPersons((d.attention||{}).unreviewed_persons || []);
+      renderHackerHits((d.attention||{}).hacker_hits || []);
+      renderCameraStrip(d.camera_latest || {});
+      renderSdrPulse(d.sdr_recent || []);
+      renderDroneAlert(d.drone_recent || []);
+      if (d.activity_pulse) renderPulseChart(d.activity_pulse);
+    })
+    .catch(function(err){ console.error('[SENTINEL] ops-data error:', err); });
+}
+
+loadOpsData();
+setInterval(loadOpsData, 30000);
+
+/* Refresh visits/arrivals on new event SocketIO push */
+socket.on('new_event', function(d) {
+  if (d.event_type === 'arrival' || d.event_type === 'departure') {
+    setTimeout(function() {
+      fetch('/api/ops-data')
+        .then(function(r){ return r.json(); })
+        .then(function(data) {
+          renderOpenVisits(data.open_visits || []);
+          renderArrivals(data.recent_arrivals || []);
+        })
+        .catch(function(){});
+    }, 1500);
+  }
+});
+
+socket.on('stats_update', function(d) {
+  if (d.active_devices !== undefined) {
+    updateStat('ad-total', d.active_devices);
+    updateStat('badge-active-total', d.active_devices);
+  }
+});
 </script>
 {% endblock %}

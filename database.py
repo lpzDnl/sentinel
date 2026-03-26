@@ -78,7 +78,8 @@ class Tag(Base):
     device_id = Column(Integer, ForeignKey("devices.id", ondelete="CASCADE"), unique=True, nullable=False)
     category = Column(
         Enum("resident", "neighbor", "delivery", "visitor",
-             "unknown", "flagged", "ignore", "drone", name="tag_category_enum"),
+             "unknown", "flagged", "ignore", "drone", "border_commuter",
+             name="tag_category_enum"),
         default="unknown",
     )
     label = Column(String(255))                  # e.g. "John's iPhone", "FedEx"
@@ -400,6 +401,56 @@ class AlertLog(Base):
 
     def __repr__(self):
         return f"<Alert {self.alert_type} delivered={self.delivered}>"
+
+
+class PresenceBundle(Base):
+    """Co-presence snapshot: TPMS vehicle arrival + nearby WiFi/BT/camera events."""
+    __tablename__ = "presence_bundles"
+
+    id                    = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp             = Column(DateTime, nullable=False, index=True)
+    tpms_signal_id        = Column(Integer, unique=True, nullable=False, index=True)
+    tpms_sensor_id        = Column(String(128), nullable=False, index=True)
+    tpms_model            = Column(String(128))
+    tpms_rssi             = Column(Float)
+    wifi_device_ids       = Column(Text)   # JSON list of device IDs (non-resident)
+    bt_device_ids         = Column(Text)   # JSON list of device IDs
+    frigate_event_ids     = Column(Text)   # JSON list of FrigateEvent.id integers
+    has_person            = Column(Boolean, default=False)
+    probe_ssid_fingerprint = Column(Text)  # sorted comma-joined SSID set
+
+    __table_args__ = (
+        Index("ix_pb_sensor_ts", "tpms_sensor_id", "timestamp"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<PresenceBundle tpms={self.tpms_sensor_id} "
+            f"person={self.has_person} @ {self.timestamp}>"
+        )
+
+
+class VehicleIdentityCluster(Base):
+    """Aggregated identity profile for a recurring TPMS-identified vehicle."""
+    __tablename__ = "vehicle_identity_clusters"
+
+    id                    = Column(Integer, primary_key=True, autoincrement=True)
+    tpms_sensor_id        = Column(String(128), unique=True, nullable=False, index=True)
+    cluster_label         = Column(String(255))   # user-assigned name e.g. "Resident A"
+    representative_ssids  = Column(Text)          # JSON list — SSID set signature
+    associated_bt_vendors = Column(Text)          # JSON list — top BT manufacturers
+    bundle_count          = Column(Integer, default=0)
+    first_seen            = Column(DateTime)
+    last_seen             = Column(DateTime)
+    last_updated          = Column(DateTime)
+    camera_appearances    = Column(Integer, default=0)
+    dominant_camera       = Column(String(64))
+
+    def __repr__(self):
+        return (
+            f"<VehicleIdentityCluster {self.tpms_sensor_id} "
+            f"bundles={self.bundle_count} label={self.cluster_label}>"
+        )
 
 
 class DroneIdEvent(Base):
